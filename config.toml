@@ -59,3 +59,9 @@ port = 18791
 [scans]
 # How often to run periodic scans (seconds)
 interval = 3600
+
+[secureclaw]
+# Enable SecureClaw pattern databases for enhanced detection
+enabled = false
+# Path to SecureClaw vendor directory (default: ./vendor/secureclaw/secureclaw/skill/configs)
+vendor_dir = "./vendor/secureclaw/secureclaw/skill/configs"

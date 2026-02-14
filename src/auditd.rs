@@ -3,9 +3,11 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::fs::File;
 use std::path::Path;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::alerts::{Alert, Severity};
+use crate::behavior::BehaviorCategory;
 
 /// Parsed representation of an audit event (may combine SYSCALL + EXECVE records)
 #[derive(Debug, Clone)]
@@ -276,7 +278,7 @@ pub async fn tail_audit_log_with_behavior(
     watched_users: Option<Vec<String>>,
     tx: mpsc::Sender<Alert>,
 ) -> Result<()> {
-    tail_audit_log_with_behavior_and_policy(path, watched_users, tx, None).await
+    tail_audit_log_with_behavior_and_policy(path, watched_users, tx, None, None).await
 }
 
 /// Tail audit log with behavior detection + optional policy engine
@@ -285,6 +287,7 @@ pub async fn tail_audit_log_with_behavior_and_policy(
     watched_users: Option<Vec<String>>,
     tx: mpsc::Sender<Alert>,
     policy_engine: Option<crate::policy::PolicyEngine>,
+    secureclaw_engine: Option<Arc<crate::secureclaw::SecureClawEngine>>,
 ) -> Result<()> {
     use std::io::{Seek, SeekFrom};
     use tokio::time::{sleep, Duration};
@@ -312,6 +315,29 @@ pub async fn tail_audit_log_with_behavior_and_policy(
                                 event.command.as_deref().unwrap_or(&event.raw[..event.raw.len().min(100)])
                             );
                             let _ = tx.send(Alert::new(verdict.severity, "policy", &msg)).await;
+                        }
+                    }
+
+                    // Run SecureClaw pattern matching (if available)
+                    if let Some(ref engine) = secureclaw_engine {
+                        if let Some(ref command) = event.command {
+                            let matches = engine.check_command(command);
+                            for pattern_match in matches {
+                                let severity = match pattern_match.severity.as_str() {
+                                    "critical" => Severity::Critical,
+                                    "high" => Severity::High,
+                                    "medium" => Severity::Medium,
+                                    _ => Severity::Low,
+                                };
+                                let msg = format!(
+                                    "[SECURECLAW:{}:{}] {} — {}",
+                                    pattern_match.database,
+                                    pattern_match.category,
+                                    pattern_match.pattern_name,
+                                    command
+                                );
+                                let _ = tx.send(Alert::new(severity, "secureclaw", &msg)).await;
+                            }
                         }
                     }
 

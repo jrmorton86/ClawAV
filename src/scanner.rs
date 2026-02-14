@@ -330,6 +330,52 @@ pub fn parse_disk_usage(output: &str) -> ScanResult {
 
 pub struct SecurityScanner;
 
+pub fn scan_secureclaw_sync() -> ScanResult {
+    let vendor_path = "vendor/secureclaw";
+    
+    // Check if vendor/secureclaw directory exists
+    if !std::path::Path::new(vendor_path).exists() {
+        return ScanResult::new("secureclaw", ScanStatus::Fail, "SecureClaw submodule missing - run 'git submodule update --init'");
+    }
+
+    // Check how old the last update is
+    match run_cmd("git", &["-C", vendor_path, "log", "-1", "--format=%cr"]) {
+        Ok(output) => {
+            let age_str = output.trim();
+            
+            // Parse age to determine status
+            if age_str.contains("second") || age_str.contains("minute") || 
+               age_str.contains("hour") || age_str.contains("day") {
+                
+                // If it contains "day" with a number, check if it's > 7 days
+                if age_str.contains("day") {
+                    if let Some(days_str) = age_str.split_whitespace().next() {
+                        if let Ok(days) = days_str.parse::<u32>() {
+                            if days > 7 {
+                                return ScanResult::new("secureclaw", ScanStatus::Warn, 
+                                    &format!("SecureClaw patterns are {} old - consider running sync script", age_str));
+                            }
+                        }
+                    }
+                }
+                
+                ScanResult::new("secureclaw", ScanStatus::Pass, 
+                    &format!("SecureClaw patterns up to date ({})", age_str))
+            } else if age_str.contains("week") || age_str.contains("month") || age_str.contains("year") {
+                ScanResult::new("secureclaw", ScanStatus::Warn, 
+                    &format!("SecureClaw patterns are {} old - run scripts/sync-secureclaw.sh", age_str))
+            } else {
+                ScanResult::new("secureclaw", ScanStatus::Warn, 
+                    &format!("SecureClaw last updated: {}", age_str))
+            }
+        }
+        Err(e) => {
+            ScanResult::new("secureclaw", ScanStatus::Fail, 
+                &format!("Cannot check SecureClaw status: {}", e))
+        }
+    }
+}
+
 impl SecurityScanner {
     pub fn run_all_scans() -> Vec<ScanResult> {
         vec![
@@ -341,6 +387,7 @@ impl SecurityScanner {
             scan_listening_services(),
             scan_resources(),
             scan_sidechannel_mitigations(),
+            scan_secureclaw_sync(),
         ]
     }
 }

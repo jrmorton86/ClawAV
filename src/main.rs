@@ -96,8 +96,9 @@ async fn main() -> Result<()> {
         let path = PathBuf::from(&config.auditd.log_path);
         let watched = config.general.effective_watched_users();
         let pe = policy_engine.clone();
+        let se = secureclaw_engine.clone();
         tokio::spawn(async move {
-            if let Err(e) = auditd::tail_audit_log_with_behavior_and_policy(&path, watched, tx, pe).await {
+            if let Err(e) = auditd::tail_audit_log_with_behavior_and_policy(&path, watched, tx, pe, se).await {
                 eprintln!("auditd monitor error: {}", e);
             }
         });
