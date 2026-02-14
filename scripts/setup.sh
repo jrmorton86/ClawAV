@@ -32,10 +32,60 @@ echo ""
 # ── Preflight checks ─────────────────────────────────────────────────────────
 [[ $EUID -eq 0 ]] || die "Must run as root (sudo bash scripts/setup.sh)"
 
+# ── Install system dependencies ──────────────────────────────────────────────
+log "Checking system dependencies..."
+if command -v apt-get &>/dev/null; then
+    # Debian/Ubuntu
+    NEEDED=""
+    command -v gcc &>/dev/null || NEEDED="$NEEDED build-essential"
+    command -v pkg-config &>/dev/null || NEEDED="$NEEDED pkg-config"
+    dpkg -l libssl-dev &>/dev/null 2>&1 || NEEDED="$NEEDED libssl-dev"
+    command -v git &>/dev/null || NEEDED="$NEEDED git"
+    command -v auditctl &>/dev/null || NEEDED="$NEEDED auditd"
+    if [[ -n "$NEEDED" ]]; then
+        log "Installing system packages:$NEEDED"
+        apt-get update -qq
+        apt-get install -y -qq $NEEDED
+    fi
+elif command -v dnf &>/dev/null; then
+    # Fedora/RHEL
+    NEEDED=""
+    command -v gcc &>/dev/null || NEEDED="$NEEDED gcc"
+    command -v pkg-config &>/dev/null || NEEDED="$NEEDED pkg-config"
+    command -v git &>/dev/null || NEEDED="$NEEDED git"
+    command -v auditctl &>/dev/null || NEEDED="$NEEDED audit"
+    if [[ -n "$NEEDED" ]]; then
+        log "Installing system packages:$NEEDED"
+        dnf install -y -q $NEEDED openssl-devel
+    fi
+elif command -v pacman &>/dev/null; then
+    # Arch
+    command -v gcc &>/dev/null || pacman -S --noconfirm base-devel
+    command -v git &>/dev/null || pacman -S --noconfirm git
+fi
+
+# ── Install Rust if needed ───────────────────────────────────────────────────
+# Check all common cargo locations
+export PATH="$HOME/.cargo/bin:/home/*/.cargo/bin:/root/.cargo/bin:$PATH"
+for USER_HOME in /home/*/; do
+    [[ -f "${USER_HOME}.cargo/bin/cargo" ]] && export PATH="${USER_HOME}.cargo/bin:$PATH"
+done
+
 if ! command -v cargo &>/dev/null; then
-    # Try common cargo locations
-    export PATH="$HOME/.cargo/bin:/home/openclaw/.cargo/bin:$PATH"
-    command -v cargo &>/dev/null || die "Rust/Cargo not found. Install with: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+    log "Rust not found — installing via rustup..."
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable 2>&1 | tail -3
+    source "$HOME/.cargo/env" 2>/dev/null || true
+    export PATH="$HOME/.cargo/bin:$PATH"
+    command -v cargo &>/dev/null || die "Rust installation failed"
+    info "Rust installed: $(rustc --version)"
+else
+    # Make sure a default toolchain is set
+    if ! cargo --version &>/dev/null 2>&1; then
+        log "Setting default Rust toolchain..."
+        rustup default stable 2>/dev/null || rustup toolchain install stable
+        rustup default stable
+    fi
+    info "Rust found: $(cargo --version 2>/dev/null || echo 'available')"
 fi
 
 # ── Step 1: Build ─────────────────────────────────────────────────────────────
