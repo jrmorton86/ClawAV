@@ -14,6 +14,7 @@ mod policy;
 mod proxy;
 mod samhain;
 mod scanner;
+mod secureclaw;
 mod slack;
 mod tui;
 
@@ -23,6 +24,7 @@ use alerts::{Alert, Severity};
 use aggregator::AggregatorConfig;
 use slack::SlackNotifier;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 #[tokio::main]
@@ -68,14 +70,34 @@ async fn main() -> Result<()> {
         None
     };
 
+    // Load SecureClaw engine
+    let secureclaw_engine = if config.secureclaw.enabled {
+        match secureclaw::SecureClawEngine::load(&config.secureclaw.vendor_dir) {
+            Ok(engine) => {
+                eprintln!("SecureClaw loaded: {} injection, {} command, {} privacy, {} supply-chain patterns",
+                    engine.injection_patterns.len(),
+                    engine.dangerous_commands.len(),
+                    engine.privacy_rules.len(),
+                    engine.supply_chain_iocs.len());
+                Some(Arc::new(engine))
+            }
+            Err(e) => {
+                eprintln!("SecureClaw load error: {} (continuing without)", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // Spawn auditd tail with behavior detection
     if config.auditd.enabled {
         let tx = raw_tx.clone();
         let path = PathBuf::from(&config.auditd.log_path);
-        let uid = config.general.watched_user.clone();
+        let watched = config.general.effective_watched_users();
         let pe = policy_engine.clone();
         tokio::spawn(async move {
-            if let Err(e) = auditd::tail_audit_log_with_behavior_and_policy(&path, &uid, tx, pe).await {
+            if let Err(e) = auditd::tail_audit_log_with_behavior_and_policy(&path, watched, tx, pe).await {
                 eprintln!("auditd monitor error: {}", e);
             }
         });

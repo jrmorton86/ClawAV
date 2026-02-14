@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::Path;
+use crate::secureclaw::SecureClawConfig;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
@@ -19,6 +20,8 @@ pub struct Config {
     pub proxy: ProxyConfig,
     #[serde(default)]
     pub policy: PolicyConfig,
+    #[serde(default)]
+    pub secureclaw: SecureClawConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -38,9 +41,33 @@ impl Default for PolicyConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct GeneralConfig {
-    pub watched_user: String,
+    pub watched_user: Option<String>,  // Keep for backward compat
+    #[serde(default)]
+    pub watched_users: Vec<String>,
+    #[serde(default)]
+    pub watch_all_users: bool,
     pub min_alert_level: String,
     pub log_file: String,
+}
+
+impl GeneralConfig {
+    /// Returns the effective set of watched users, handling backward compat
+    pub fn effective_watched_users(&self) -> Option<Vec<String>> {
+        if self.watch_all_users {
+            return None; // None means watch all
+        }
+        let mut users = self.watched_users.clone();
+        if let Some(ref single) = self.watched_user {
+            if !users.contains(single) {
+                users.push(single.clone());
+            }
+        }
+        if users.is_empty() {
+            None // No users specified = watch all
+        } else {
+            Some(users)
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]

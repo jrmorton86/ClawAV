@@ -10,6 +10,8 @@ pub enum BehaviorCategory {
     PrivilegeEscalation,
     SecurityTamper,
     Reconnaissance,
+    SideChannel,
+    SecureClawMatch,
 }
 
 impl fmt::Display for BehaviorCategory {
@@ -19,6 +21,8 @@ impl fmt::Display for BehaviorCategory {
             BehaviorCategory::PrivilegeEscalation => write!(f, "PRIV_ESC"),
             BehaviorCategory::SecurityTamper => write!(f, "SEC_TAMPER"),
             BehaviorCategory::Reconnaissance => write!(f, "RECON"),
+            BehaviorCategory::SideChannel => write!(f, "SIDE_CHAN"),
+            BehaviorCategory::SecureClawMatch => write!(f, "SC_MATCH"),
         }
     }
 }
@@ -29,6 +33,7 @@ const CRITICAL_READ_PATHS: &[&str] = &[
     "/etc/sudoers",
     "/etc/gshadow",
     "/etc/master.passwd",
+    "/proc/kcore",
 ];
 
 /// Sensitive files that should never be written by the watched user
@@ -51,6 +56,8 @@ const RECON_PATHS: &[&str] = &[
     ".ssh/known_hosts",
     ".gnupg/",
     ".kube/config",
+    "/proc/kallsyms",
+    "/sys/devices/system/cpu/vulnerabilities/",
 ];
 
 /// Network exfiltration tools
@@ -80,6 +87,9 @@ const SECURITY_TAMPER_PATTERNS: &[&str] = &[
 /// Recon commands
 const RECON_COMMANDS: &[&str] = &["whoami", "id", "uname", "env", "printenv", "hostname", "ifconfig", "ip addr"];
 
+/// Side-channel attack tools
+const SIDECHANNEL_TOOLS: &[&str] = &["mastik", "flush-reload", "prime-probe", "sgx-step", "cache-attack"];
+
 /// Classify a parsed audit event against known attack patterns.
 /// Returns Some((category, severity)) if the event matches a rule, None otherwise.
 pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Severity)> {
@@ -103,6 +113,11 @@ pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Sever
         // --- CRITICAL: Data Exfiltration via network tools ---
         if EXFIL_COMMANDS.iter().any(|&c| binary.eq_ignore_ascii_case(c)) {
             return Some((BehaviorCategory::DataExfiltration, Severity::Critical));
+        }
+
+        // --- CRITICAL: Side-channel attack tools ---
+        if SIDECHANNEL_TOOLS.iter().any(|&c| binary.eq_ignore_ascii_case(c)) {
+            return Some((BehaviorCategory::SideChannel, Severity::Critical));
         }
 
         // --- CRITICAL: Reading sensitive files ---
@@ -188,6 +203,11 @@ pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Sever
                 }
             }
         }
+    }
+
+    // perf_event_open can be used for cache timing attacks
+    if event.syscall_name == "perf_event_open" {
+        return Some((BehaviorCategory::SideChannel, Severity::Warning));
     }
 
     None
@@ -393,6 +413,95 @@ mod tests {
     #[test]
     fn test_openat_normal_file() {
         let event = make_syscall_event("openat", "/tmp/something");
+        let result = classify_behavior(&event);
+        assert_eq!(result, None);
+    }
+
+    // --- Side-Channel Attack Detection ---
+
+    #[test]
+    fn test_sidechannel_tool_mastik() {
+        let event = make_exec_event(&["mastik", "--attack-type", "flush-reload"]);
+        let result = classify_behavior(&event);
+        assert_eq!(result, Some((BehaviorCategory::SideChannel, Severity::Critical)));
+    }
+
+    #[test]
+    fn test_sidechannel_tool_flush_reload() {
+        let event = make_exec_event(&["flush-reload", "/usr/lib/x86_64-linux-gnu/libcrypto.so.1.1"]);
+        let result = classify_behavior(&event);
+        assert_eq!(result, Some((BehaviorCategory::SideChannel, Severity::Critical)));
+    }
+
+    #[test]
+    fn test_sidechannel_tool_prime_probe() {
+        let event = make_exec_event(&["prime-probe", "--target", "aes"]);
+        let result = classify_behavior(&event);
+        assert_eq!(result, Some((BehaviorCategory::SideChannel, Severity::Critical)));
+    }
+
+    #[test]
+    fn test_sidechannel_tool_sgx_step() {
+        let event = make_exec_event(&["sgx-step", "--victim", "/opt/enclave.so"]);
+        let result = classify_behavior(&event);
+        assert_eq!(result, Some((BehaviorCategory::SideChannel, Severity::Critical)));
+    }
+
+    #[test]
+    fn test_sidechannel_tool_cache_attack() {
+        let event = make_exec_event(&["cache-attack", "--L1d", "--target", "openssl"]);
+        let result = classify_behavior(&event);
+        assert_eq!(result, Some((BehaviorCategory::SideChannel, Severity::Critical)));
+    }
+
+    #[test]
+    fn test_perf_event_open_syscall() {
+        let mut event = make_syscall_event("perf_event_open", "");
+        event.file_path = None; // perf_event_open doesn't involve file paths
+        let result = classify_behavior(&event);
+        assert_eq!(result, Some((BehaviorCategory::SideChannel, Severity::Warning)));
+    }
+
+    #[test]
+    fn test_access_proc_kcore() {
+        let event = make_exec_event(&["cat", "/proc/kcore"]);
+        let result = classify_behavior(&event);
+        assert_eq!(result, Some((BehaviorCategory::PrivilegeEscalation, Severity::Critical)));
+    }
+
+    #[test]
+    fn test_access_proc_kallsyms() {
+        let event = make_exec_event(&["cat", "/proc/kallsyms"]);
+        let result = classify_behavior(&event);
+        assert_eq!(result, Some((BehaviorCategory::Reconnaissance, Severity::Warning)));
+    }
+
+    #[test]
+    fn test_access_cpu_vulnerabilities() {
+        let event = make_exec_event(&["cat", "/sys/devices/system/cpu/vulnerabilities/spectre_v1"]);
+        let result = classify_behavior(&event);
+        assert_eq!(result, Some((BehaviorCategory::Reconnaissance, Severity::Warning)));
+    }
+
+    #[test]
+    fn test_openat_proc_kcore_syscall() {
+        let event = make_syscall_event("openat", "/proc/kcore");
+        let result = classify_behavior(&event);
+        assert_eq!(result, Some((BehaviorCategory::PrivilegeEscalation, Severity::Critical)));
+    }
+
+    #[test]
+    fn test_openat_proc_kallsyms_syscall() {
+        let event = make_syscall_event("openat", "/proc/kallsyms");
+        let result = classify_behavior(&event);
+        assert_eq!(result, Some((BehaviorCategory::Reconnaissance, Severity::Warning)));
+    }
+
+    #[test]
+    fn test_cachegrind_not_flagged_as_sidechannel() {
+        // cachegrind is a legitimate profiling tool (valgrind --tool=cachegrind)
+        // It's not in SIDECHANNEL_TOOLS, so it should not be flagged
+        let event = make_exec_event(&["cachegrind", "--trace", "/tmp/program"]);
         let result = classify_behavior(&event);
         assert_eq!(result, None);
     }

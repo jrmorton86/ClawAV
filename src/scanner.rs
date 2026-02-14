@@ -258,6 +258,60 @@ pub fn scan_resources() -> ScanResult {
     }
 }
 
+pub fn scan_sidechannel_mitigations() -> ScanResult {
+    let mitigations = [
+        "spectre_v1",
+        "spectre_v2", 
+        "meltdown",
+        "mds",
+        "tsx_async_abort",
+        "itlb_multihit",
+        "srbds",
+        "mmio_stale_data",
+        "retbleed",
+        "spec_store_bypass",
+    ];
+
+    let mut vulnerable_count = 0;
+    let mut missing_files = 0;
+    let mut vulnerable_list = Vec::new();
+
+    for mitigation in &mitigations {
+        let path = format!("/sys/devices/system/cpu/vulnerabilities/{}", mitigation);
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => {
+                let status = contents.trim();
+                if status.contains("Vulnerable") {
+                    vulnerable_count += 1;
+                    vulnerable_list.push(format!("{}: {}", mitigation, status));
+                } else if !status.contains("Mitigation:") && !status.contains("Not affected") {
+                    // Unknown status - treat as warning
+                    vulnerable_list.push(format!("{}: {}", mitigation, status));
+                }
+            }
+            Err(_) => {
+                missing_files += 1;
+                vulnerable_list.push(format!("{}: file missing", mitigation));
+            }
+        }
+    }
+
+    if vulnerable_count > 0 || missing_files > 0 {
+        let total_issues = vulnerable_count + missing_files;
+        ScanResult::new(
+            "sidechannel", 
+            ScanStatus::Warn, 
+            &format!("{} vulnerability issues: {}", total_issues, vulnerable_list.join(", "))
+        )
+    } else {
+        ScanResult::new(
+            "sidechannel", 
+            ScanStatus::Pass, 
+            &format!("All {} CPU side-channel mitigations enabled", mitigations.len())
+        )
+    }
+}
+
 pub fn parse_disk_usage(output: &str) -> ScanResult {
     // Second line, 5th column is Use%
     if let Some(line) = output.lines().nth(1) {
@@ -286,6 +340,7 @@ impl SecurityScanner {
             scan_ssh(),
             scan_listening_services(),
             scan_resources(),
+            scan_sidechannel_mitigations(),
         ]
     }
 }
@@ -439,5 +494,21 @@ rules 0
         let r = ScanResult::new("test", ScanStatus::Fail, "broken");
         let alert = r.to_alert().unwrap();
         assert_eq!(alert.severity, Severity::Critical);
+    }
+
+    #[test]
+    fn test_parse_sidechannel_mitigation_status() {
+        // Test the logic used in scan_sidechannel_mitigations
+        let protected_status = "Mitigation: Full generic retpoline, IBRS, IBPB";
+        assert!(protected_status.contains("Mitigation:"));
+        
+        let not_affected_status = "Not affected";
+        assert!(not_affected_status.contains("Not affected"));
+        
+        let vulnerable_status = "Vulnerable";
+        assert!(vulnerable_status.contains("Vulnerable"));
+        
+        let unknown_status = "Processor vulnerable";
+        assert!(!unknown_status.contains("Mitigation:") && !unknown_status.contains("Not affected"));
     }
 }

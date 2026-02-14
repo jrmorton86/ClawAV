@@ -80,6 +80,7 @@ fn syscall_name_aarch64(num: u32) -> &'static str {
         222 => "mmap",
         226 => "mprotect",
         233 => "mkdirat",
+        241 => "perf_event_open",
         242 => "accept4",
         260 => "wait4",
         261 => "prlimit64",
@@ -134,7 +135,7 @@ fn extract_execve_command(line: &str) -> Option<(String, Vec<String>)> {
 }
 
 /// Parse a single auditd log line into a ParsedEvent
-pub fn parse_to_event(line: &str, watched_user: &str) -> Option<ParsedEvent> {
+pub fn parse_to_event(line: &str, watched_users: Option<&[String]>) -> Option<ParsedEvent> {
     // EXECVE records don't contain uid/auid — they follow a SYSCALL record
     // that was already filtered. Allow all EXECVE lines through.
     if line.contains("type=EXECVE") {
@@ -149,11 +150,14 @@ pub fn parse_to_event(line: &str, watched_user: &str) -> Option<ParsedEvent> {
         });
     }
 
-    // For non-EXECVE lines, filter by watched user
-    if !line.contains(&format!("uid={}", watched_user))
-        && !line.contains(&format!("auid={}", watched_user))
-    {
-        return None;
+    // For non-EXECVE lines, filter by watched users
+    if let Some(users) = watched_users {
+        let matches = users.iter().any(|uid| {
+            line.contains(&format!("uid={}", uid)) || line.contains(&format!("auid={}", uid))
+        });
+        if !matches {
+            return None;
+        }
     }
 
     if line.contains("type=SYSCALL") {
@@ -222,15 +226,15 @@ pub fn event_to_alert(event: &ParsedEvent) -> Alert {
 }
 
 /// Legacy parse function — now wraps parse_to_event + event_to_alert
-pub fn parse_audit_line(line: &str, watched_user: &str) -> Option<Alert> {
-    let event = parse_to_event(line, watched_user)?;
+pub fn parse_audit_line(line: &str, watched_users: Option<&[String]>) -> Option<Alert> {
+    let event = parse_to_event(line, watched_users)?;
     Some(event_to_alert(&event))
 }
 
 /// Tail the audit log file and send alerts
 pub async fn tail_audit_log(
     path: &Path,
-    watched_uid: &str,
+    watched_users: Option<Vec<String>>,
     tx: mpsc::Sender<Alert>,
 ) -> Result<()> {
     use std::io::{Seek, SeekFrom};
@@ -248,7 +252,7 @@ pub async fn tail_audit_log(
                 sleep(Duration::from_millis(500)).await;
             }
             Ok(_) => {
-                if let Some(alert) = parse_audit_line(&line, watched_uid) {
+                if let Some(alert) = parse_audit_line(&line, watched_users.as_deref()) {
                     let _ = tx.send(alert).await;
                 }
             }
@@ -269,16 +273,16 @@ pub async fn tail_audit_log(
 /// Tail audit log with behavior detection — sends both alerts and parsed events
 pub async fn tail_audit_log_with_behavior(
     path: &Path,
-    watched_uid: &str,
+    watched_users: Option<Vec<String>>,
     tx: mpsc::Sender<Alert>,
 ) -> Result<()> {
-    tail_audit_log_with_behavior_and_policy(path, watched_uid, tx, None).await
+    tail_audit_log_with_behavior_and_policy(path, watched_users, tx, None).await
 }
 
 /// Tail audit log with behavior detection + optional policy engine
 pub async fn tail_audit_log_with_behavior_and_policy(
     path: &Path,
-    watched_uid: &str,
+    watched_users: Option<Vec<String>>,
     tx: mpsc::Sender<Alert>,
     policy_engine: Option<crate::policy::PolicyEngine>,
 ) -> Result<()> {
@@ -297,7 +301,7 @@ pub async fn tail_audit_log_with_behavior_and_policy(
                 sleep(Duration::from_millis(500)).await;
             }
             Ok(_) => {
-                if let Some(event) = parse_to_event(&line, watched_uid) {
+                if let Some(event) = parse_to_event(&line, watched_users.as_deref()) {
                     // Run policy engine first (if available)
                     if let Some(ref engine) = policy_engine {
                         if let Some(verdict) = engine.evaluate(&event) {
@@ -358,7 +362,7 @@ mod tests {
     #[test]
     fn test_parse_execve_line() {
         let line = r#"type=EXECVE msg=audit(1707849600.123:456): argc=3 a0="curl" a1="-s" a2="http://evil.com" uid=1000"#;
-        let event = parse_to_event(line, "1000").unwrap();
+        let event = parse_to_event(line, Some(&["1000".to_string()])).unwrap();
         assert_eq!(event.syscall_name, "execve");
         assert_eq!(event.command.as_deref(), Some("curl -s http://evil.com"));
         assert_eq!(event.args, vec!["curl", "-s", "http://evil.com"]);
@@ -367,7 +371,7 @@ mod tests {
     #[test]
     fn test_parse_syscall_line() {
         let line = r#"type=SYSCALL msg=audit(1707849600.123:456): arch=c00000b7 syscall=56 success=yes exit=3 uid=1000 name="/etc/shadow""#;
-        let event = parse_to_event(line, "1000").unwrap();
+        let event = parse_to_event(line, Some(&["1000".to_string()])).unwrap();
         assert_eq!(event.syscall_name, "openat");
         assert!(event.success);
         assert_eq!(event.file_path.as_deref(), Some("/etc/shadow"));
@@ -376,14 +380,14 @@ mod tests {
     #[test]
     fn test_readable_alert_from_execve() {
         let line = r#"type=EXECVE msg=audit(1707849600.123:456): argc=2 a0="whoami" a1="" uid=1000"#;
-        let alert = parse_audit_line(line, "1000").unwrap();
+        let alert = parse_audit_line(line, Some(&["1000".to_string()])).unwrap();
         assert!(alert.message.starts_with("exec:"));
     }
 
     #[test]
     fn test_readable_alert_from_syscall() {
         let line = r#"type=SYSCALL msg=audit(1707849600.123:456): arch=c00000b7 syscall=56 success=yes uid=1000 exe="/usr/bin/cat""#;
-        let alert = parse_audit_line(line, "1000").unwrap();
+        let alert = parse_audit_line(line, Some(&["1000".to_string()])).unwrap();
         assert!(alert.message.contains("openat"));
         assert!(alert.message.contains("ok"));
     }
@@ -398,6 +402,33 @@ mod tests {
     fn test_ignores_other_user_syscall() {
         // SYSCALL records from other users should be filtered out
         let line = r#"type=SYSCALL msg=audit(1707849600.123:456): arch=c00000b7 syscall=56 success=yes uid=0 exe="/usr/bin/ls""#;
-        assert!(parse_to_event(line, "1000").is_none());
+        assert!(parse_to_event(line, Some(&["1000".to_string()])).is_none());
+    }
+
+    #[test]
+    fn test_watch_all_users() {
+        // When None is passed, should match all users
+        let line = r#"type=SYSCALL msg=audit(1707849600.123:456): arch=c00000b7 syscall=56 success=yes uid=0 exe="/usr/bin/ls""#;
+        let event = parse_to_event(line, None).unwrap();
+        assert_eq!(event.syscall_name, "openat");
+    }
+
+    #[test]
+    fn test_multi_user_matching() {
+        // Should match if any of the watched users matches
+        let line1 = r#"type=SYSCALL msg=audit(1707849600.123:456): arch=c00000b7 syscall=56 success=yes uid=1000 exe="/usr/bin/ls""#;
+        let line2 = r#"type=SYSCALL msg=audit(1707849600.123:456): arch=c00000b7 syscall=56 success=yes uid=1001 exe="/usr/bin/ls""#;
+        let line3 = r#"type=SYSCALL msg=audit(1707849600.123:456): arch=c00000b7 syscall=56 success=yes uid=500 exe="/usr/bin/ls""#;
+        
+        let watched = vec!["1000".to_string(), "1001".to_string()];
+        
+        assert!(parse_to_event(line1, Some(&watched)).is_some());
+        assert!(parse_to_event(line2, Some(&watched)).is_some());
+        assert!(parse_to_event(line3, Some(&watched)).is_none());
+    }
+
+    #[test]
+    fn test_syscall_241_is_perf_event_open() {
+        assert_eq!(syscall_name_aarch64(241), "perf_event_open");
     }
 }
