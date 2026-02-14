@@ -90,8 +90,7 @@ if ! $FORCE; then
         # Prompt for key if not provided
         if [[ -z "$ADMIN_KEY" ]]; then
             echo -e "${CYAN}Enter your ClawAV admin key:${NC}"
-            read -rs -p "> " ADMIN_KEY
-            echo ""
+            read -r -p "> " ADMIN_KEY
         fi
 
         [[ -n "$ADMIN_KEY" ]] || die "No admin key provided"
