@@ -280,7 +280,11 @@ echo ""
 echo -e "  ${GREEN}${BOLD}Configuration summary:${NC}"
 echo -e "  ${BOLD}Config file:${NC}    $CONF"
 echo -e "  ${BOLD}Watched user:${NC}   UID $WATCH_UID"
-[[ -n "$slack_url" ]] && echo -e "  ${BOLD}Slack:${NC}          Enabled" || echo -e "  ${BOLD}Slack:${NC}          Disabled (logs only)"
+if grep -q 'webhook_url = ""' "$CONF" 2>/dev/null || ! grep -q 'webhook_url' "$CONF" 2>/dev/null; then
+    echo -e "  ${BOLD}Slack:${NC}          Disabled (logs only)"
+else
+    echo -e "  ${BOLD}Slack:${NC}          Enabled"
+fi
 echo ""
 echo -e "  ${YELLOW}You can always edit $CONF later (before locking down).${NC}"
 echo ""
