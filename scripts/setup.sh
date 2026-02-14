@@ -12,17 +12,24 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_FROM_SOURCE=false
 
+AUTO_START=false
+
 # Parse flags
 for arg in "$@"; do
     case "$arg" in
         --source|--build|--from-source)
             BUILD_FROM_SOURCE=true
             ;;
+        --auto)
+            AUTO_START=true
+            ;;
         --help|-h)
-            echo "Usage: sudo bash setup.sh [--source]"
+            echo "Usage: sudo bash setup.sh [OPTIONS]"
             echo ""
-            echo "  (default)    Install pre-built binaries from target/release/"
-            echo "  --source     Build from source first (installs Rust if needed)"
+            echo "  (default)      Install pre-built binaries from target/release/"
+            echo "  --source       Build from source first (installs Rust if needed)"
+            echo "  --auto         Start the service automatically after install"
+            echo "  --source --auto  Full unattended: build + install + start"
             echo ""
             exit 0
             ;;
@@ -240,6 +247,21 @@ if command -v auditctl &>/dev/null; then
     log "Setting up auditd rules..."
     if [[ -f "$SCRIPT_DIR/setup-auditd.sh" ]]; then
         bash "$SCRIPT_DIR/setup-auditd.sh" 2>/dev/null || warn "Auditd setup had issues (check manually)"
+    fi
+fi
+
+# ── Auto-start if requested ──────────────────────────────────────────────────
+if $AUTO_START; then
+    log "Starting ClawAV service..."
+    systemctl restart clawav
+    sleep 2
+    if systemctl is-active --quiet clawav; then
+        info "✅ ClawAV is running!"
+        echo ""
+        log "Live logs:"
+        journalctl -u clawav -n 10 --no-pager 2>/dev/null || true
+    else
+        warn "Service failed to start — check: journalctl -u clawav -n 20"
     fi
 fi
 

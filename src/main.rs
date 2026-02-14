@@ -39,9 +39,11 @@ async fn main() -> Result<()> {
         return audit_chain::run_verify_audit(path);
     }
 
-    let config_path = args
-        .get(1)
-        .map(PathBuf::from)
+    // Parse args: skip flags (--headless), find config path
+    let positional_args: Vec<&String> = args.iter().skip(1).filter(|a| !a.starts_with("--")).collect();
+    let config_path = positional_args
+        .first()
+        .map(|s| PathBuf::from(s))
         .unwrap_or_else(|| PathBuf::from("/etc/clawav/config.toml"));
 
     let config = Config::load(&config_path)?;

@@ -1,55 +1,32 @@
 [general]
-# User to monitor
 watched_user = "1000"
-# Alert severity threshold (info, warning, critical)
-min_alert_level = "warning"
-# Log file for ClawAV's own logs
+min_alert_level = "info"
 log_file = "/var/log/clawav/watchdog.log"
 
 [slack]
-# IMPORTANT: This webhook must be completely independent of OpenClaw's Slack integration.
-# Create a separate Slack app with its own webhook so alerts work even if OpenClaw is compromised.
-# Run scripts/setup-slack.sh to configure.
-enabled = true
-# Webhook URL for independent alerting (bypasses OpenClaw)
-webhook_url = "YOUR_WEBHOOK_URL_HERE"
-# Channel override (optional)
+enabled = false
+webhook_url = ""
+backup_webhook_url = ""
 channel = "#devops"
-# Backup webhook (different channel/app) in case primary fails
-backup_webhook_url = "YOUR_WEBHOOK_URL_HERE"
-# Only send alerts at or above this level to Slack
 min_slack_level = "warning"
 
 [auditd]
-# Path to audit log
 log_path = "/var/log/audit/audit.log"
-# Enable auditd monitoring
 enabled = true
 
 [network]
-# Path to network log (via syslog/journal)
-# TODO: Add journald integration for systems without syslog
 log_path = "/var/log/syslog"
-# nftables/iptables log prefix to filter on
-log_prefix = "OPENCLAWAV_NET"
-# Enable network monitoring (disable if no syslog file)
+log_prefix = "CLAWAV_NET"
 enabled = true
-# Source: "auto", "journald", or "file"
 source = "auto"
 
 [falco]
-# NOTE: Falco requires BTF-enabled kernel. Pi OS kernel lacks BTF.
-# Disable until Falco is installed (Phase 4)
 enabled = false
 log_path = "/var/log/falco/falco_output.jsonl"
 
 [samhain]
-# Disable until Samhain is compiled and installed (Phase 4)
 enabled = false
 log_path = "/var/log/samhain/samhain.log"
-
-[behavior]
-enabled = true
 
 [api]
 enabled = true
@@ -57,11 +34,21 @@ bind = "0.0.0.0"
 port = 18791
 
 [scans]
-# How often to run periodic scans (seconds)
 interval = 3600
 
 [secureclaw]
-# Enable SecureClaw pattern databases for enhanced detection
 enabled = false
-# Path to SecureClaw vendor directory (default: ./vendor/secureclaw/secureclaw/skill/configs)
 vendor_dir = "./vendor/secureclaw/secureclaw/skill/configs"
+
+[policy]
+enabled = true
+dir = "./policies"
+
+[proxy]
+enabled = false
+bind = "127.0.0.1"
+port = 18790
+
+[netpolicy]
+enabled = false
+mode = "blocklist"
