@@ -20,6 +20,7 @@
 
 use chrono::{DateTime, Local};
 use serde::Serialize;
+use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
@@ -1464,7 +1465,7 @@ impl SecurityScanner {
     /// Docker, password policy, open FDs, DNS, NTP, failed logins, zombie processes,
     /// swap/tmpfs, environment variables, packages, core dumps, network interfaces,
     /// systemd hardening, user accounts, cognitive integrity, and OpenClaw-specific checks.
-    pub fn run_all_scans() -> Vec<ScanResult> {
+    pub fn run_all_scans_with_config(openclaw_config: &crate::config::OpenClawConfig) -> Vec<ScanResult> {
         let mut results = vec![
             scan_firewall(),
             scan_auditd(),
@@ -1510,11 +1511,268 @@ impl SecurityScanner {
         ));
         // OpenClaw-specific security checks
         results.extend(scan_openclaw_security());
+
+        // OpenClaw security integration (config-driven)
+        if openclaw_config.enabled {
+            // Phase 1: Audit CLI
+            if openclaw_config.audit_on_scan {
+                results.extend(run_openclaw_audit(&openclaw_config.audit_command));
+            }
+
+            // Phase 2: Config drift
+            if openclaw_config.config_drift_check {
+                results.extend(crate::openclaw_config::scan_config_drift(
+                    &openclaw_config.config_path, &openclaw_config.baseline_path));
+            }
+
+            // Phase 3: mDNS
+            if openclaw_config.mdns_check {
+                results.extend(scan_mdns_leaks());
+            }
+
+            // Phase 3: Extensions
+            if openclaw_config.plugin_watch {
+                results.extend(scan_extensions_dir(
+                    &format!("{}/extensions", openclaw_config.state_dir)));
+            }
+
+            // Phase 3: Control UI
+            if let Ok(cfg_str) = std::fs::read_to_string(&openclaw_config.config_path) {
+                results.extend(scan_control_ui_security(&cfg_str));
+            }
+        }
+
         results
+    }
+
+    /// Execute all security checks with default OpenClaw config.
+    pub fn run_all_scans() -> Vec<ScanResult> {
+        Self::run_all_scans_with_config(&crate::config::OpenClawConfig::default())
     }
 }
 
 /// OpenClaw-specific security checks
+/// Check that a path has permissions no more permissive than `max_mode`.
+fn check_path_permissions(path: &str, max_mode: u32, label: &str) -> ScanResult {
+    match std::fs::metadata(path) {
+        Ok(meta) => {
+            let mode = meta.permissions().mode() & 0o777;
+            if (mode & !max_mode) == 0 {
+                ScanResult::new(
+                    &format!("openclaw:perms:{}", label),
+                    ScanStatus::Pass,
+                    &format!("{} permissions {:o} (max {:o})", path, mode, max_mode),
+                )
+            } else {
+                ScanResult::new(
+                    &format!("openclaw:perms:{}", label),
+                    ScanStatus::Fail,
+                    &format!("{} permissions {:o} — should be {:o} or tighter", path, mode, max_mode),
+                )
+            }
+        }
+        Err(_) => ScanResult::new(
+            &format!("openclaw:perms:{}", label),
+            ScanStatus::Warn,
+            &format!("{} not found — skipping permission check", path),
+        ),
+    }
+}
+
+/// Check for symlinks inside a directory that point outside it (symlink attack vector).
+fn check_symlinks_in_dir(dir: &str) -> ScanResult {
+    let dir_path = std::path::Path::new(dir);
+    if !dir_path.exists() {
+        return ScanResult::new("openclaw:symlinks", ScanStatus::Warn,
+            &format!("{} not found", dir));
+    }
+
+    let mut suspicious = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir_path) {
+        for entry in entries.flatten() {
+            if entry.file_type().map(|ft| ft.is_symlink()).unwrap_or(false) {
+                if let Ok(target) = std::fs::read_link(entry.path()) {
+                    let resolved = entry.path().parent()
+                        .unwrap_or(dir_path)
+                        .join(&target);
+                    if let Ok(canonical) = std::fs::canonicalize(&resolved) {
+                        if !canonical.starts_with(dir_path) {
+                            suspicious.push(format!("{} → {}",
+                                entry.path().display(), canonical.display()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if suspicious.is_empty() {
+        ScanResult::new("openclaw:symlinks", ScanStatus::Pass,
+            &format!("No suspicious symlinks in {}", dir))
+    } else {
+        ScanResult::new("openclaw:symlinks", ScanStatus::Fail,
+            &format!("Symlinks pointing outside directory: {}", suspicious.join(", ")))
+    }
+}
+
+/// Parse `openclaw security audit` text output into ScanResults.
+///
+/// Line format: `✓ description` (pass), `⚠ description` (warn), `✗ description` (fail)
+fn parse_openclaw_audit_output(output: &str) -> Vec<ScanResult> {
+    let mut results = Vec::new();
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() { continue; }
+        
+        let (status, detail) = if trimmed.starts_with('✓') {
+            (ScanStatus::Pass, trimmed.trim_start_matches('✓').trim())
+        } else if trimmed.starts_with('⚠') {
+            (ScanStatus::Warn, trimmed.trim_start_matches('⚠').trim())
+        } else if trimmed.starts_with('✗') {
+            (ScanStatus::Fail, trimmed.trim_start_matches('✗').trim())
+        } else {
+            continue; // skip non-finding lines (headers, etc.)
+        };
+        
+        // Extract category from description (first word before colon, or "general")
+        let category = detail.split(':').next()
+            .unwrap_or("general")
+            .trim()
+            .to_lowercase()
+            .replace(' ', "_");
+        
+        results.push(ScanResult::new(
+            &format!("openclaw:audit:{}", category),
+            status,
+            detail,
+        ));
+    }
+    results
+}
+
+/// Run `openclaw security audit --deep` and parse results.
+fn run_openclaw_audit(command: &str) -> Vec<ScanResult> {
+    let parts: Vec<&str> = command.split_whitespace().collect();
+    if parts.is_empty() {
+        return vec![ScanResult::new("openclaw:audit", ScanStatus::Warn,
+            "Empty audit command configured")];
+    }
+    
+    match Command::new(parts[0]).args(&parts[1..]).output() {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let mut results = parse_openclaw_audit_output(&stdout);
+            if results.is_empty() && !stderr.is_empty() {
+                results.push(ScanResult::new("openclaw:audit", ScanStatus::Warn,
+                    &format!("Audit produced no findings. stderr: {}", 
+                        stderr.chars().take(200).collect::<String>())));
+            }
+            if !output.status.success() {
+                results.push(ScanResult::new("openclaw:audit", ScanStatus::Warn,
+                    &format!("Audit exited with code {}", output.status)));
+            }
+            results
+        }
+        Err(e) => vec![ScanResult::new("openclaw:audit", ScanStatus::Warn,
+            &format!("Failed to run audit: {} (is openclaw installed?)", e))],
+    }
+}
+
+/// Check avahi-browse output for OpenClaw service advertisements (info leak).
+fn check_mdns_openclaw_leak(avahi_output: &str) -> ScanResult {
+    let openclaw_services: Vec<&str> = avahi_output.lines()
+        .filter(|l| l.to_lowercase().contains("openclaw") || l.to_lowercase().contains("clawav"))
+        .collect();
+    
+    if openclaw_services.is_empty() {
+        ScanResult::new("openclaw:mdns", ScanStatus::Pass,
+            "No OpenClaw/ClawAV services advertised via mDNS")
+    } else {
+        ScanResult::new("openclaw:mdns", ScanStatus::Warn,
+            &format!("OpenClaw services advertised via mDNS (info leak): {}",
+                openclaw_services.join("; ")))
+    }
+}
+
+/// Scan for mDNS info leaks by checking avahi-browse.
+fn scan_mdns_leaks() -> Vec<ScanResult> {
+    match Command::new("avahi-browse").args(&["-apt", "--no-db-lookup"]).output() {
+        Ok(output) => vec![check_mdns_openclaw_leak(
+            &String::from_utf8_lossy(&output.stdout))],
+        Err(_) => vec![ScanResult::new("openclaw:mdns", ScanStatus::Pass,
+            "avahi-browse not available — mDNS check skipped")],
+    }
+}
+
+/// Scan OpenClaw extensions directory for installed plugins.
+fn scan_extensions_dir(extensions_path: &str) -> Vec<ScanResult> {
+    let path = std::path::Path::new(extensions_path);
+    if !path.exists() {
+        return vec![ScanResult::new("openclaw:extensions", ScanStatus::Pass,
+            "No extensions directory — no plugins installed")];
+    }
+    
+    let mut results = Vec::new();
+    let mut count = 0;
+    
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                count += 1;
+                let pkg = entry.path().join("package.json");
+                if pkg.exists() {
+                    results.push(ScanResult::new("openclaw:extension",
+                        ScanStatus::Warn,
+                        &format!("Plugin installed: {} — verify trusted source",
+                            entry.file_name().to_string_lossy())));
+                }
+            }
+        }
+    }
+    
+    if results.is_empty() {
+        results.push(ScanResult::new("openclaw:extensions", ScanStatus::Pass,
+            &format!("{} extension dirs found, all clean", count)));
+    }
+    
+    results
+}
+
+/// Check OpenClaw Control UI security settings.
+/// Check OpenClaw Control UI security settings using proper JSON parsing.
+fn scan_control_ui_security(config: &str) -> Vec<ScanResult> {
+    let mut results = Vec::new();
+    
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(config) {
+        // Check dangerouslyDisableDeviceAuth
+        let dangerous = val.pointer("/controlUi/dangerouslyDisableDeviceAuth")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if dangerous {
+            results.push(ScanResult::new("openclaw:controlui", ScanStatus::Fail,
+                "Control UI: dangerouslyDisableDeviceAuth is TRUE — severe security downgrade"));
+        }
+        
+        // Check allowInsecureAuth
+        let insecure = val.pointer("/controlUi/allowInsecureAuth")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if insecure {
+            results.push(ScanResult::new("openclaw:controlui", ScanStatus::Warn,
+                "Control UI: allowInsecureAuth enabled — token-only auth, no device pairing"));
+        }
+    }
+    // If JSON parsing fails, skip silently (other checks will catch malformed config)
+    
+    if results.is_empty() {
+        results.push(ScanResult::new("openclaw:controlui", ScanStatus::Pass,
+            "Control UI security settings nominal"));
+    }
+    
+    results
+}
+
 fn scan_openclaw_security() -> Vec<ScanResult> {
     let mut results = Vec::new();
 
@@ -1577,6 +1835,44 @@ fn scan_openclaw_security() -> Vec<ScanResult> {
             "OpenClaw gateway config not found — skipping OpenClaw checks"));
     }
 
+    // Permission checks (from OpenClaw security docs)
+    let state_dir = "/home/openclaw/.openclaw";
+    results.push(check_path_permissions(state_dir, 0o700, "state_dir"));
+    results.push(check_path_permissions(
+        &format!("{}/openclaw.json", state_dir), 0o600, "config"));
+
+    // Check credential files aren't group/world readable
+    let cred_dir = format!("{}/credentials", state_dir);
+    if std::path::Path::new(&cred_dir).exists() {
+        results.push(check_path_permissions(&cred_dir, 0o700, "credentials_dir"));
+        if let Ok(entries) = std::fs::read_dir(&cred_dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_file() {
+                    results.push(check_path_permissions(
+                        p.to_str().unwrap_or(""), 0o600,
+                        &format!("cred:{}", p.file_name().unwrap_or_default().to_string_lossy())));
+                }
+            }
+        }
+    }
+
+    // Session log permissions
+    let agents_dir = format!("{}/agents", state_dir);
+    if let Ok(agents) = std::fs::read_dir(&agents_dir) {
+        for agent in agents.flatten() {
+            let sessions_dir = agent.path().join("sessions");
+            if sessions_dir.exists() {
+                results.push(check_path_permissions(
+                    sessions_dir.to_str().unwrap_or(""), 0o700,
+                    &format!("sessions:{}", agent.file_name().to_string_lossy())));
+            }
+        }
+    }
+
+    // Symlink safety check
+    results.push(check_symlinks_in_dir(state_dir));
+
     // ── 4. Access via Tailscale/SSH tunnel ───────────────────────────────
     // Check if Tailscale is running
     let tailscale_running = run_cmd("tailscale", &["status"]).is_ok()
@@ -1613,10 +1909,12 @@ pub async fn run_periodic_scans(
     interval_secs: u64,
     raw_tx: mpsc::Sender<Alert>,
     scan_store: SharedScanResults,
+    openclaw_config: crate::config::OpenClawConfig,
 ) {
     loop {
         // Run scans in blocking task since they use Command
-        let results = tokio::task::spawn_blocking(|| SecurityScanner::run_all_scans())
+        let oc_cfg = openclaw_config.clone();
+        let results = tokio::task::spawn_blocking(move || SecurityScanner::run_all_scans_with_config(&oc_cfg))
             .await
             .unwrap_or_default();
 
@@ -1788,5 +2086,153 @@ rules 0
         
         let unknown_status = "Processor vulnerable";
         assert!(!unknown_status.contains("Mitigation:") && !unknown_status.contains("Not affected"));
+    }
+
+    #[test]
+    fn test_check_path_permissions_secure() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let result = check_path_permissions(dir.path().to_str().unwrap(), 0o700, "test_dir");
+        assert_eq!(result.status, ScanStatus::Pass);
+    }
+
+    #[test]
+    fn test_check_path_permissions_too_open() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        let result = check_path_permissions(dir.path().to_str().unwrap(), 0o700, "test_dir");
+        assert_eq!(result.status, ScanStatus::Fail);
+    }
+
+    #[test]
+    fn test_check_path_permissions_missing() {
+        let result = check_path_permissions("/nonexistent/path/12345", 0o700, "missing");
+        assert_eq!(result.status, ScanStatus::Warn);
+    }
+
+    #[test]
+    fn test_check_symlinks_no_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = check_symlinks_in_dir(dir.path().to_str().unwrap());
+        assert_eq!(result.status, ScanStatus::Pass);
+    }
+
+    #[test]
+    fn test_check_symlinks_missing_dir() {
+        let result = check_symlinks_in_dir("/nonexistent/dir/12345");
+        assert_eq!(result.status, ScanStatus::Warn);
+    }
+
+    #[test]
+    fn test_parse_openclaw_audit_output() {
+        let output = "⚠ Gateway auth: mode is 'none' — anyone on the network can connect\n✓ DM policy: pairing (secure)\n⚠ groupPolicy is 'open' for slack — restrict to allowlist\n✓ Filesystem permissions: ~/.openclaw is 700\n✗ Browser control: CDP port exposed on 0.0.0.0";
+        let results = parse_openclaw_audit_output(output);
+        assert_eq!(results.len(), 5);
+        assert_eq!(results[0].status, ScanStatus::Warn);
+        assert_eq!(results[1].status, ScanStatus::Pass);
+        assert_eq!(results[2].status, ScanStatus::Warn);
+        assert_eq!(results[3].status, ScanStatus::Pass);
+        assert_eq!(results[4].status, ScanStatus::Fail);
+    }
+
+    #[test]
+    fn test_parse_openclaw_audit_empty() {
+        let results = parse_openclaw_audit_output("");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_openclaw_audit_with_headers() {
+        let output = "OpenClaw Security Audit\n=======================\n✓ Gateway bound to loopback\n⚠ No auth configured";
+        let results = parse_openclaw_audit_output(output);
+        assert_eq!(results.len(), 2); // headers skipped
+        assert_eq!(results[0].status, ScanStatus::Pass);
+        assert_eq!(results[1].status, ScanStatus::Warn);
+    }
+
+    #[test]
+    fn test_parse_openclaw_audit_categories() {
+        let output = "✓ DM policy: pairing mode active\n✗ Browser control: exposed";
+        let results = parse_openclaw_audit_output(output);
+        assert!(results[0].category.contains("openclaw:audit:dm_policy"));
+        assert!(results[1].category.contains("openclaw:audit:browser_control"));
+    }
+
+    #[test]
+    fn test_mdns_openclaw_exposed() {
+        let output = "+;eth0;IPv4;OpenClaw Gateway;_http._tcp;local\n";
+        let result = check_mdns_openclaw_leak(output);
+        assert_eq!(result.status, ScanStatus::Warn);
+    }
+
+    #[test]
+    fn test_mdns_no_openclaw() {
+        let output = "+;eth0;IPv4;Printer;_ipp._tcp;local\n";
+        let result = check_mdns_openclaw_leak(output);
+        assert_eq!(result.status, ScanStatus::Pass);
+    }
+
+    #[test]
+    fn test_mdns_empty() {
+        let result = check_mdns_openclaw_leak("");
+        assert_eq!(result.status, ScanStatus::Pass);
+    }
+
+    #[test]
+    fn test_scan_extensions_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = scan_extensions_dir(dir.path().to_str().unwrap());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].status, ScanStatus::Pass);
+    }
+
+    #[test]
+    fn test_scan_extensions_missing_dir() {
+        let result = scan_extensions_dir("/nonexistent/extensions/12345");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].status, ScanStatus::Pass);
+    }
+
+    #[test]
+    fn test_scan_extensions_with_plugin() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_dir = dir.path().join("my-plugin");
+        std::fs::create_dir(&plugin_dir).unwrap();
+        std::fs::write(plugin_dir.join("package.json"), "{}").unwrap();
+        let result = scan_extensions_dir(dir.path().to_str().unwrap());
+        assert!(result.iter().any(|r| r.status == ScanStatus::Warn));
+    }
+
+    #[test]
+    fn test_control_ui_dangerous_flag() {
+        let config = r#"{"controlUi": {"dangerouslyDisableDeviceAuth": true}}"#;
+        let results = scan_control_ui_security(config);
+        assert!(results.iter().any(|r| r.status == ScanStatus::Fail));
+    }
+
+    #[test]
+    fn test_control_ui_insecure_auth() {
+        let config = r#"{"controlUi": {"allowInsecureAuth": true}}"#;
+        let results = scan_control_ui_security(config);
+        assert!(results.iter().any(|r| r.status == ScanStatus::Warn));
+    }
+
+    #[test]
+    fn test_control_ui_secure() {
+        let config = r#"{"controlUi": {"enabled": true}}"#;
+        let results = scan_control_ui_security(config);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, ScanStatus::Pass);
+    }
+
+    #[test]
+    fn test_control_ui_both_flags() {
+        let config = r#"{"controlUi": {"dangerouslyDisableDeviceAuth": true, "allowInsecureAuth": true}}"#;
+        let results = scan_control_ui_security(config);
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().any(|r| r.status == ScanStatus::Fail));
+        assert!(results.iter().any(|r| r.status == ScanStatus::Warn));
     }
 }

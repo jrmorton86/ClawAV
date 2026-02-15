@@ -993,3 +993,4 @@ To add defaults at compile time, modify `SentinelConfig::default()` in `src/conf
 | [`docs/CLAWSUDO-AND-POLICY.md`](docs/CLAWSUDO-AND-POLICY.md) | clawsudo, admin key, audit chain, API proxy, LD_PRELOAD guard |
 | [`docs/API.md`](docs/API.md) | HTTP REST API endpoints and response formats |
 | [`docs/INSTALL.md`](docs/INSTALL.md) | Installation, hardening steps, CLI commands, recovery procedure |
+| [`docs/openclaw-integration.md`](docs/openclaw-integration.md) | OpenClaw security integration — config drift, permission checks, mDNS, plugin monitoring |

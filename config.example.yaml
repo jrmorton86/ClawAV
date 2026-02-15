@@ -24,3 +24,17 @@ sentinel:
   debounce_ms: 200
   scan_content: true
   max_file_size_kb: 1024
+
+# ── OpenClaw Security Integration ────────────────────────────────────
+# Monitors OpenClaw configuration and infrastructure for security issues.
+openclaw:
+  enabled: true
+  # config_path: "/home/openclaw/.openclaw/openclaw.json"
+  # state_dir: "/home/openclaw/.openclaw"
+  # audit_command: "openclaw security audit --deep"
+  audit_on_scan: true           # Run openclaw security audit during periodic scans
+  config_drift_check: true      # Detect security regressions in OpenClaw config
+  # baseline_path: "/etc/clawav/openclaw-config-baseline.json"
+  mdns_check: true              # Check for mDNS info leaks
+  plugin_watch: true            # Monitor OpenClaw extensions directory
+  session_log_audit: true       # Auditd rules for session log access

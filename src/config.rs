@@ -44,6 +44,8 @@ pub struct Config {
     pub sentinel: SentinelConfig,
     #[serde(default)]
     pub auto_update: AutoUpdateConfig,
+    #[serde(default)]
+    pub openclaw: OpenClawConfig,
 }
 
 /// Auto-update configuration: checks GitHub releases periodically.
@@ -425,12 +427,93 @@ impl Default for SentinelConfig {
                     patterns: vec!["SKILL.md".to_string()],
                     policy: WatchPolicy::Watched,
                 },
+                // OpenClaw credential and config monitoring
+                WatchPathConfig {
+                    path: "/home/openclaw/.openclaw/openclaw.json".to_string(),
+                    patterns: vec!["*".to_string()],
+                    policy: WatchPolicy::Watched,
+                },
+                WatchPathConfig {
+                    path: "/home/openclaw/.openclaw/credentials".to_string(),
+                    patterns: vec!["*.json".to_string()],
+                    policy: WatchPolicy::Protected,
+                },
+                WatchPathConfig {
+                    path: "/home/openclaw/.openclaw/agents/main/agent/auth-profiles.json".to_string(),
+                    patterns: vec!["*".to_string()],
+                    policy: WatchPolicy::Protected,
+                },
+                // Session metadata monitoring
+                WatchPathConfig {
+                    path: "/home/openclaw/.openclaw/agents/main/sessions/sessions.json".to_string(),
+                    patterns: vec!["*".to_string()],
+                    policy: WatchPolicy::Watched,
+                },
+                // WhatsApp credential theft detection
+                WatchPathConfig {
+                    path: "/home/openclaw/.openclaw/credentials/whatsapp".to_string(),
+                    patterns: vec!["creds.json".to_string()],
+                    policy: WatchPolicy::Protected,
+                },
+                // Pairing allowlist changes
+                WatchPathConfig {
+                    path: "/home/openclaw/.openclaw/credentials".to_string(),
+                    patterns: vec!["*-allowFrom.json".to_string()],
+                    policy: WatchPolicy::Watched,
+                },
             ],
             quarantine_dir: default_quarantine_dir(),
             shadow_dir: default_shadow_dir(),
             debounce_ms: default_debounce_ms(),
             scan_content: default_scan_content(),
             max_file_size_kb: default_max_file_size_kb(),
+        }
+    }
+}
+
+/// OpenClaw-specific security monitoring configuration.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct OpenClawConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_openclaw_config_path")]
+    pub config_path: String,
+    #[serde(default = "default_openclaw_state_dir")]
+    pub state_dir: String,
+    #[serde(default = "default_openclaw_audit_cmd")]
+    pub audit_command: String,
+    #[serde(default = "default_true")]
+    pub audit_on_scan: bool,
+    #[serde(default = "default_true")]
+    pub config_drift_check: bool,
+    #[serde(default = "default_openclaw_baseline_path")]
+    pub baseline_path: String,
+    #[serde(default)]
+    pub mdns_check: bool,
+    #[serde(default)]
+    pub plugin_watch: bool,
+    #[serde(default)]
+    pub session_log_audit: bool,
+}
+
+fn default_openclaw_config_path() -> String { "/home/openclaw/.openclaw/openclaw.json".to_string() }
+fn default_openclaw_state_dir() -> String { "/home/openclaw/.openclaw".to_string() }
+fn default_openclaw_audit_cmd() -> String { "openclaw security audit --deep".to_string() }
+fn default_openclaw_baseline_path() -> String { "/etc/clawav/openclaw-config-baseline.json".to_string() }
+
+impl Default for OpenClawConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            config_path: default_openclaw_config_path(),
+            state_dir: default_openclaw_state_dir(),
+            audit_command: default_openclaw_audit_cmd(),
+            audit_on_scan: true,
+            config_drift_check: true,
+            baseline_path: default_openclaw_baseline_path(),
+            mdns_check: false,
+            plugin_watch: false,
+            session_log_audit: false,
         }
     }
 }
@@ -450,5 +533,57 @@ impl Config {
         std::fs::write(path, content)
             .with_context(|| format!("Failed to write config: {}", path.display()))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_openclaw_config_defaults() {
+        let config: OpenClawConfig = toml::from_str("").unwrap();
+        assert!(config.enabled);
+        assert_eq!(config.state_dir, "/home/openclaw/.openclaw");
+        assert!(config.audit_on_scan);
+        assert!(config.config_drift_check);
+    }
+
+    #[test]
+    fn test_openclaw_config_custom() {
+        let toml_str = r#"
+            enabled = false
+            config_path = "/tmp/test.json"
+            state_dir = "/tmp/openclaw"
+            audit_on_scan = false
+        "#;
+        let config: OpenClawConfig = toml::from_str(toml_str).unwrap();
+        assert!(!config.enabled);
+        assert_eq!(config.config_path, "/tmp/test.json");
+        assert!(!config.audit_on_scan);
+    }
+
+    #[test]
+    fn test_default_sentinel_includes_openclaw_creds() {
+        let config = SentinelConfig::default();
+        let paths: Vec<&str> = config.watch_paths.iter()
+            .map(|w| w.path.as_str()).collect();
+        assert!(paths.iter().any(|p| p.contains(".openclaw/credentials")),
+            "Should watch OpenClaw credentials dir");
+        assert!(paths.iter().any(|p| p.contains("openclaw.json")),
+            "Should watch OpenClaw config file");
+        assert!(paths.iter().any(|p| p.contains("auth-profiles.json")),
+            "Should watch auth profiles");
+    }
+
+    #[test]
+    fn test_default_sentinel_includes_openclaw_session_and_whatsapp() {
+        let config = SentinelConfig::default();
+        let paths: Vec<&str> = config.watch_paths.iter()
+            .map(|w| w.path.as_str()).collect();
+        assert!(paths.iter().any(|p| p.contains("sessions/sessions.json")),
+            "Should watch session metadata");
+        assert!(paths.iter().any(|p| p.contains("credentials/whatsapp")),
+            "Should watch WhatsApp credentials");
     }
 }

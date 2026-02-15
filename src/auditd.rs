@@ -16,6 +16,18 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+/// Recommended auditd rules for ClawAV monitoring.
+///
+/// Install these via `auditctl` or drop into `/etc/audit/rules.d/clawav.rules`.
+pub const RECOMMENDED_AUDIT_RULES: &[&str] = &[
+    // Detect immutable-flag removal on protected files
+    "-w /usr/bin/chattr -p x -k clawav-tamper",
+    // Protect ClawAV config files
+    "-w /etc/clawav/ -p wa -k clawav-config",
+    // Monitor OpenClaw session log reads (prompt-injection / exfiltration vector)
+    "-w /home/openclaw/.openclaw/agents/main/sessions/ -p r -k openclaw_session_read",
+];
+
 use crate::alerts::{Alert, Severity};
 
 /// Whether the event originated from the autonomous agent or a human operator
