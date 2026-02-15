@@ -1,231 +1,277 @@
+<div align="center">
+
 # 🛡️ ClawAV
 
-**Tamper-proof, OS-level security watchdog for AI agents.**
+**Tamper-proof security watchdog for AI agents**
 
-ClawAV monitors an AI agent's every syscall, network connection, and file access at the kernel level — and **cannot be disabled, modified, or silenced by the agent**, even under full prompt injection compromise. Once installed, the only way to change it is physical access and a recovery boot.
+[![Build](https://img.shields.io/github/actions/workflow/status/coltz108/ClawAV/ci.yml?branch=main&style=flat-square)](https://github.com/coltz108/ClawAV/actions)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/coltz108/ClawAV?style=flat-square)](https://github.com/coltz108/ClawAV/releases)
 
-## Install
+</div>
+
+---
+
+## Table of Contents
+
+- [What is ClawAV?](#what-is-clawav)
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [Architecture Overview](#architecture-overview)
+- [Contributing](#contributing)
+- [License](#license)
+
+## What is ClawAV?
+
+Autonomous AI agents operate with real system access — executing commands, editing files, and managing infrastructure. But who watches the watcher? Traditional security tools weren't designed for a world where the *user* is an AI that could, intentionally or through prompt injection, disable its own monitoring.
+
+ClawAV solves this with the **"swallowed key" pattern**: the agent (or its operator) installs ClawAV, but once running, the agent *cannot* modify, disable, or uninstall it. The binary is immutable (`chattr +i`), the service is protected by systemd, and the admin key is hashed and stored outside the agent's reach. Every attempt to tamper is logged and alerted on.
+
+Under the hood, ClawAV provides real-time file integrity monitoring via inotify, behavioral analysis of syscalls through auditd, threat pattern detection across file contents, and 30+ periodic security scanners — all feeding into a hash-chained audit trail that's cryptographically tamper-evident. Think of it as an immune system for machines running AI agents.
+
+## Features
+
+### 🛡️ Real-time File Sentinel
+Inotify-based file watcher with configurable paths and policies. Detects creates, modifications, and deletions instantly. Supports **protected** (alert + quarantine + restore from shadow copy) and **watched** (alert + diff) policies. Content scanning via SecureClaw on every change.
+
+### 🔒 Cognitive File Protection
+Dedicated protection for AI identity files — `SOUL.md`, `AGENTS.md`, `IDENTITY.md`, `TOOLS.md`, `USER.md`, `HEARTBEAT.md`. SHA-256 baselines are computed at startup; any modification triggers a CRITICAL alert. Memory files like `MEMORY.md` are tracked with diffs.
+
+### 🔍 SecureClaw Pattern Engine
+Loads pattern databases for prompt injection, dangerous commands, privacy violations, and supply-chain IOCs. Regex-compiled at startup and applied to file contents in real-time. Pluggable vendor directory for community-maintained rulesets.
+
+### 📊 30+ Security Scanners
+Periodic scans covering firewall status (UFW), auditd configuration, SSH hardening, Docker security, kernel parameters, open ports, world-writable files, SUID binaries, cognitive file integrity, crontab auditing, and more. Configurable interval.
+
+### 🔗 Hash-Chained Audit Trail
+Every alert is appended to a sequential, SHA-256 hash-chained log. Each entry includes the hash of the previous entry, making retroactive tampering detectable. Chain integrity is verifiable at any time.
+
+### 🖥️ Terminal UI
+Full-featured Ratatui dashboard with tabbed views: live alert feed, scanner results, configuration editor, and audit chain viewer. Navigate with keyboard shortcuts; edit config in-place.
+
+### 🔔 Slack Alerts
+Real-time notifications to Slack via webhook with severity filtering, failover to a backup webhook, and periodic health heartbeats. Configurable minimum alert level for Slack delivery.
+
+### 🔄 Auto-Updater
+Checks GitHub releases every 5 minutes (configurable). Downloads new binaries with **Ed25519 signature verification** against an embedded public key. Performs the `chattr -i` → replace → `chattr +i` → restart dance automatically.
+
+### 🚪 clawsudo
+A sudo proxy/gatekeeper binary. Every privileged command the agent runs goes through policy evaluation first. Rules can allow, deny, or alert on specific commands, arguments, and file access patterns. Denied commands return exit code 77.
+
+### 🧬 LD_PRELOAD Guard & Behavioral Analysis
+Syscall-level monitoring through auditd with behavioral classification: data exfiltration, privilege escalation, security tampering, reconnaissance, and side-channel attacks. Distinguishes between agent and human actors via auid attribution.
+
+## Quick Start
+
+### One-line Install
 
 ```bash
-# One-line install (latest release, auto-detects arch)
 curl -sSL https://raw.githubusercontent.com/coltz108/ClawAV/main/scripts/oneshot-install.sh | sudo bash
-
-# Pin a version
-curl -sSL https://raw.githubusercontent.com/coltz108/ClawAV/main/scripts/oneshot-install.sh | sudo bash -s -- --version v0.1.0
 ```
 
-Supports **x86_64** and **aarch64** (Raspberry Pi, ARM servers). Downloads pre-built binaries from [GitHub Releases](https://github.com/coltz108/ClawAV/releases).
-
-After install, the installer auto-detects your user and opens the config for review. You can also edit later:
+### Build from Source
 
 ```bash
-sudo nano /etc/clawav/config.toml
+git clone https://github.com/coltz108/ClawAV.git
+cd ClawAV
+cargo build --release
+
+# Install binaries
+sudo install -m 755 target/release/clawav /usr/local/bin/clawav
+sudo install -m 755 target/release/clawsudo /usr/local/bin/clawsudo
+
+# Make immutable (the "swallowed key")
+sudo chattr +i /usr/local/bin/clawav
 ```
+
+### Initial Setup
+
+```bash
+# Create config directory
+sudo mkdir -p /etc/clawav
+
+# Copy and edit config
+sudo cp config.toml /etc/clawav/config.toml
+sudo nano /etc/clawav/config.toml
+
+# Generate admin key (required for updates and admin commands)
+clawav admin keygen
+```
+
+## Configuration
+
+ClawAV uses a TOML config file (default: `/etc/clawav/config.toml`). Key sections:
 
 ```toml
 [general]
-watched_user = "1000"              # Auto-detected during install
-watched_users = ["1000", "1001"]   # Monitor additional users
-watch_all_users = false            # Monitor ALL users
+watched_users = ["openclaw"]    # Users to monitor (empty = all)
+min_alert_level = "info"        # info | warning | critical
+log_file = "/var/log/clawav/audit.jsonl"
 
 [slack]
-webhook_url = "https://hooks.slack.com/..."    # Optional — independent alert channel
-backup_webhook_url = "https://hooks.slack.com/..."
-channel = "#devops"
-min_slack_level = "warning"
+webhook_url = "https://hooks.slack.com/services/..."
+backup_webhook_url = ""         # Failover webhook
+channel = "#security"
+min_slack_level = "warning"     # Only send warnings+ to Slack
+heartbeat_interval = 3600       # Health ping every hour (0 = off)
 
 [auditd]
 enabled = true
+log_path = "/var/log/audit/audit.log"
 
-[api]
+[network]
 enabled = true
-port = 18791
+source = "auto"                 # auto | journald | file
+log_prefix = "CLAWAV_NET"
+allowlisted_cidrs = ["192.168.0.0/16", "10.0.0.0/8"]
+
+[sentinel]
+enabled = true
+quarantine_dir = "/etc/clawav/quarantine"
+shadow_dir = "/etc/clawav/sentinel-shadow"
+scan_content = true
+debounce_ms = 200
+
+[[sentinel.watch_paths]]
+path = "/home/openclaw/.openclaw/workspace/SOUL.md"
+patterns = ["*"]
+policy = "protected"            # protected = restore + alert; watched = diff + alert
 
 [secureclaw]
+enabled = true
+vendor_dir = "./vendor/secureclaw/secureclaw/skill/configs"
+
+[scans]
+interval = 300                  # Seconds between scan sweeps
+
+[auto_update]
+enabled = true
+interval = 300                  # Check GitHub every 5 minutes
+
+[proxy]
 enabled = false
+bind = "127.0.0.1"
+port = 18790
+
+[api]
+enabled = false
+bind = "0.0.0.0"
+port = 18791
 
 [policy]
 enabled = true
-dir = "./policies"
+dir = "./policies"              # YAML policy rules for clawsudo
+
+[netpolicy]
+enabled = false
+mode = "blocklist"              # allowlist | blocklist
+blocked_hosts = ["evil.com"]
 ```
 
-See `config.toml` in the repo for all options. Then start the service:
+## Usage
 
 ```bash
-sudo systemctl start clawav
-sudo journalctl -u clawav -f   # watch logs
+# Start with Terminal UI (default)
+clawav
+
+# Run headless (servers, background monitoring)
+clawav --headless
+
+# Self-update to latest release
+clawav update
+
+# Check for updates without installing
+clawav update --check
+
+# Generate admin API key
+clawav admin keygen
+
+# Use clawsudo instead of sudo for AI agents
+clawsudo apt-get update
 ```
 
-## Why
-
-AI agents like [OpenClaw](https://github.com/openclaw/openclaw) run with real OS access — executing commands, reading files, making network requests. A prompt injection attack can weaponize that access: exfiltrating secrets, disabling firewalls, escalating privileges.
-
-Traditional security tools trust their operator. **ClawAV assumes the operator (the AI) is compromised** and builds an independent monitoring layer the agent cannot touch. Alerts go through an independent Slack webhook — not through the AI agent.
-
-## Architecture
+## Architecture Overview
 
 ```
-Agent command → clawsudo (policy gate) → LD_PRELOAD (syscall intercept) → OS
-     ↓                                          ↓
-auditd logs → EXECVE parser → behavior engine + policy engine → aggregator
-     ↓                                                              ↓
-hash-chained audit trail                              Slack webhook (independent)
-     ↓                                                              ↓
-JSON API on LAN (:18791)                              TUI dashboard
+┌─────────────────────────────────────────────────────────┐
+│                      ClawAV Core                        │
+│                                                         │
+│  ┌──────────┐  ┌──────────┐  ┌────────────┐            │
+│  │  Auditd  │  │ Sentinel │  │  Journald  │  Sources   │
+│  │ Watcher  │  │ (inotify)│  │   Tailer   │            │
+│  └────┬─────┘  └────┬─────┘  └─────┬──────┘            │
+│       │              │              │                    │
+│       ▼              ▼              ▼                    │
+│  ┌──────────────────────────────────────────┐           │
+│  │          Alert Channel (mpsc)            │           │
+│  └──────────────────┬───────────────────────┘           │
+│                     │                                    │
+│       ┌─────────────┼─────────────┐                     │
+│       ▼             ▼             ▼                      │
+│  ┌─────────┐  ┌──────────┐  ┌──────────┐               │
+│  │Behavior │  │SecureClaw│  │  Policy  │  Analysis      │
+│  │Analyzer │  │ Engine   │  │ Engine   │                │
+│  └────┬────┘  └────┬─────┘  └────┬─────┘               │
+│       │             │             │                      │
+│       ▼             ▼             ▼                      │
+│  ┌──────────────────────────────────────────┐           │
+│  │           Alert Aggregator               │           │
+│  │     (dedup · rate-limit · suppress)      │           │
+│  └──────────────────┬───────────────────────┘           │
+│                     │                                    │
+│       ┌─────────────┼──────────────┐                    │
+│       ▼             ▼              ▼                     │
+│  ┌─────────┐  ┌──────────┐  ┌───────────┐              │
+│  │  Slack  │  │   TUI    │  │Audit Chain│  Outputs      │
+│  │Notifier │  │Dashboard │  │  (log)    │               │
+│  └─────────┘  └──────────┘  └───────────┘              │
+│                                                         │
+│  ┌─────────┐  ┌──────────┐  ┌───────────┐              │
+│  │  REST   │  │ Scanner  │  │  Admin    │  Services     │
+│  │  API    │  │  Loop    │  │  Socket   │               │
+│  └─────────┘  └──────────┘  └───────────┘              │
+└─────────────────────────────────────────────────────────┘
 ```
 
-**9,800+ lines of Rust/C. 168 tests. 3 binaries.**
+**Data flow:** Sources generate raw events → alert channel fans out to analyzers → aggregator deduplicates and rate-limits → outputs deliver to Slack, TUI, and the hash-chained audit log. The scanner loop runs periodic system checks on a separate timer. The admin socket accepts authenticated commands via Unix domain socket.
 
-## Key Components
+## Contributing
 
-### clawsudo — Sudo Proxy
+### Adding a Scanner
 
-Replaces `sudo` for the AI agent. Every privileged command goes through policy evaluation first.
+Scanners live in `src/scanner.rs`. Add a new function that returns `ScanResult`:
 
-- **allow** — Execute immediately
-- **deny** — Block (exit 77), alert to Slack
-- **ask** — Notify human via Slack, wait up to 5 min for approval
+```rust
+fn scan_my_check() -> ScanResult {
+    // Your check logic
+    ScanResult::new("my_check", ScanStatus::Pass, "All good")
+}
+```
 
-**Fail-secure:** No policy files found = ALL commands denied.
+Register it in the `run_all_scans()` function.
+
+### Adding File Watch Rules
+
+Add entries to `sentinel.watch_paths` in config, or extend `PROTECTED_FILES`/`WATCHED_FILES` in `src/cognitive.rs`.
+
+### Adding Pattern Databases
+
+SecureClaw patterns are loaded from YAML files in the vendor directory. Each file contains regex patterns with name, category, and severity fields. Drop new `.yaml` files into the vendor directory.
+
+### Adding Policy Rules
+
+Policy rules for `clawsudo` are YAML files in the `policies/` directory:
 
 ```yaml
-# policies/clawsudo.yaml
-rules:
-  - name: "allow-apt"
-    match:
-      command: ["apt", "apt-get"]
-    enforcement: allow
-
-  - name: "deny-raw-shell"
-    match:
-      command: ["bash", "sh", "zsh"]
-    enforcement: deny
+- name: block-curl-to-external
+  match:
+    command: ["curl"]
+    exclude_args: ["localhost", "127.0.0.1"]
+  enforcement: deny
 ```
-
-### LD_PRELOAD — Syscall Interception
-
-`libclawguard.so` intercepts libc calls **before they execute** (unlike auditd which logs after):
-
-- **`execve`** — blocks denied binaries
-- **`open`/`openat`** — blocks writes to protected paths
-- **`connect`** — blocks connections to denied addresses
-
-Denied calls return `EACCES` and are logged.
-
-### Behavior Engine
-
-Hardcoded rules classifying events as `DATA_EXFIL`, `PRIV_ESC`, `SEC_TAMPER`, `RECON`, or `SIDE_CHAN`. Works independently of the YAML policy engine — two layers of detection.
-
-### YAML Policy Engine
-
-User-configurable rules loaded from `policies/*.yaml`:
-
-```yaml
-rules:
-  - name: "block-data-exfiltration"
-    match:
-      command: ["curl", "wget", "nc"]
-      exclude_args: ["api.anthropic.com"]
-    action: critical
-
-  - name: "deny-shadow-read"
-    match:
-      file_access: ["/etc/shadow", "/etc/sudoers.d/*"]
-    action: critical
-```
-
-### Audit Chain
-
-SHA-256 hash-chained append-only log. Each entry includes the hash of the previous entry — any tampering is detectable.
-
-### SecureClaw Integration
-
-Optional integration with [SecureClaw](https://github.com/adversa-ai/secureclaw) pattern databases:
-- 70+ prompt injection patterns across 7 categories
-- Dangerous command patterns with severity levels
-- PII detection (block/warn/rewrite)
-- Supply chain IOC detection
-
-## The "Swallowed Key" — 7 Layers of Tamper Protection
-
-The installer implements 7 layers that make ClawAV immutable once installed:
-
-| Layer | Protection |
-|-------|-----------|
-| 1. System user | `clawav` user with no login shell |
-| 2. Binary + config | `/usr/local/bin/clawav` + `/etc/clawav/` |
-| 3. systemd service | `Restart=always`, `WatchdogSec=30`, `NoNewPrivileges=true` |
-| 4. Immutable flags | `chattr +i` on binary, config, and service file |
-| 5. AppArmor | Denies agent user access to all ClawAV paths |
-| 6. Capability dropping | Strips `CAP_LINUX_IMMUTABLE`, `CAP_SYS_PTRACE`, `CAP_SYS_MODULE` from agent |
-| 7. Kernel hardening | `kernel.modules_disabled=1`, `yama.ptrace_scope=2`, `auditctl -e 2` |
-
-Plus: restricted sudoers, LD_PRELOAD guard, and **installer self-destructs** after completion.
-
-## Threat Model
-
-| Threat | Defense |
-|--------|---------|
-| Agent exfiltrates data via curl/wget | Behavior engine + policy engine + clawsudo deny |
-| Agent reads `/etc/shadow` | Behavior engine + policy engine + LD_PRELOAD deny |
-| Agent disables firewall | Behavior engine + clawsudo deny + sudoers restrict |
-| Agent kills the watchdog | `Restart=always` + WatchdogSec + sudoers deny |
-| Agent modifies watchdog binary | `chattr +i` + AppArmor + capability drop |
-| Agent loads kernel module | `kernel.modules_disabled=1` |
-| Agent ptraces the watchdog | `yama.ptrace_scope=2` + capability drop |
-| Agent tampers with audit trail | Hash chain detects modifications |
-| Agent compromises alert channel | ClawAV uses its own independent Slack webhook |
-| PII/secrets leaked via LLM API | DLP proxy scans outbound requests |
-| Side-channel attacks | Kernel mitigation scanner + perf_event_open monitoring |
-| Prompt injection | SecureClaw pattern databases (70+ patterns) |
-
-**Not in scope:** Physical access (by design, that's the recovery path), kernel 0-days, pre-installation compromise.
-
-## JSON API
-
-LAN-only HTTP API on port 18791:
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/status` | System status, uptime, module states |
-| `GET /api/alerts` | Last 100 alerts |
-| `GET /api/security` | Alert counts by severity and source |
-
-## Admin Socket
-
-Unix socket at `/var/run/clawav/admin.sock` with Argon2-hashed key auth:
-- `status` — Check watchdog state
-- `scan` — Trigger manual security scan
-- `pause` — Pause monitoring (max 30 min, auto-resume)
-
-3 failed auth attempts = 1 hour lockout + CRITICAL Slack alert.
-
-## Build from Source
-
-```bash
-# Build
-cargo build --release
-
-# Build LD_PRELOAD library
-bash scripts/build-preload.sh
-
-# Run (dev mode)
-cargo run -- ./config.toml
-
-# Run headless
-cargo run -- --headless ./config.toml
-
-# Tests
-cargo test
-
-# Verify audit chain
-cargo run -- verify-audit /path/to/audit.chain
-```
-
-## CI/CD
-
-Every push runs build + test + clippy. Tagged releases (`v*`) cross-compile for x86_64 and aarch64, publishing binaries to GitHub Releases automatically.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE) for details.
