@@ -444,7 +444,7 @@ enabled = true
 log_path = "/var/log/syslog"
 log_prefix = "CLAWAV_NET"
 source = "auto"  # auto|journald|file
-allowlisted_cidrs = ["192.168.0.0/16", "10.0.0.0/8", ...]
+allowlisted_cidrs = ["192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "169.254.0.0/16", "127.0.0.0/8", "224.0.0.0/4"]
 allowlisted_ports = [443, 53, 123, 5353]
 
 [falco]
