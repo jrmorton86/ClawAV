@@ -140,21 +140,29 @@ sudo systemctl disable clawav 2>/dev/null || true
 log "Removing immutable attributes..."
 sudo chattr -i /usr/local/bin/clawav 2>/dev/null || true
 sudo chattr -i /usr/local/bin/clawsudo 2>/dev/null || true
+sudo chattr -i /usr/local/bin/clawav-tray 2>/dev/null || true
 sudo chattr -i /etc/clawav/config.toml 2>/dev/null || true
 sudo chattr -i /etc/clawav/admin.key.hash 2>/dev/null || true
 sudo chattr -i /etc/systemd/system/clawav.service 2>/dev/null || true
 sudo chattr -i /etc/sudoers.d/clawav-deny 2>/dev/null || true
+sudo chattr -i /etc/sudoers.d/010_pi-nopasswd 2>/dev/null || true
 
 # ── 3. Remove AppArmor profile ───────────────────────────────────────────────
 log "Removing AppArmor profile..."
 if command -v apparmor_parser &>/dev/null; then
+    # Current name (installer creates clawav.deny-agent)
+    sudo apparmor_parser -R /etc/apparmor.d/clawav.deny-agent 2>/dev/null || true
+    sudo rm -f /etc/apparmor.d/clawav.deny-agent
+    # Legacy names from older installs
     sudo apparmor_parser -R /etc/apparmor.d/clawav.deny-openclaw 2>/dev/null || true
     sudo rm -f /etc/apparmor.d/clawav.deny-openclaw
+    sudo rm -f /etc/apparmor.d/etc.clawav.protect
 fi
 
 # ── 4. Remove sudoers restrictions ───────────────────────────────────────────
 log "Removing sudoers restrictions..."
 sudo rm -f /etc/sudoers.d/clawav-deny
+sudo rm -f /etc/sudoers.d/010_pi-nopasswd
 
 # ── 5. Remove kernel hardening ───────────────────────────────────────────────
 log "Removing kernel hardening sysctl..."
@@ -186,16 +194,35 @@ log "Removing systemd service..."
 sudo rm -f /etc/systemd/system/clawav.service
 sudo systemctl daemon-reload
 
-# ── 9. Remove binaries ───────────────────────────────────────────────────────
+# ── 9. Remove tray autostart + binary ────────────────────────────────────────
+log "Removing tray components..."
+# Find the calling user's home for autostart cleanup
+CALLING_USER="${SUDO_USER:-$USER}"
+CALLING_HOME=$(eval echo "~$CALLING_USER")
+sudo rm -f "$CALLING_HOME/.config/autostart/clawav-tray.desktop" 2>/dev/null || true
+
+# ── 10. Remove binaries ──────────────────────────────────────────────────────
 log "Removing binaries..."
 sudo rm -f /usr/local/bin/clawav
 sudo rm -f /usr/local/bin/clawsudo
+sudo rm -f /usr/local/bin/clawav-tray
 
-# ── 10. Remove config ────────────────────────────────────────────────────────
+# ── 11. Warn about quarantined files ──────────────────────────────────────────
+if [[ -d /etc/clawav/quarantine ]] && [[ -n "$(ls -A /etc/clawav/quarantine 2>/dev/null)" ]]; then
+    warn "Quarantined files found in /etc/clawav/quarantine/:"
+    ls -la /etc/clawav/quarantine/ 2>/dev/null | head -10
+    echo ""
+    warn "These are files ClawAV intercepted as threats."
+    warn "They will be deleted. Copy them out now if you need them."
+    read -rp "Continue? [Y/n]: " confirm
+    [[ "$confirm" =~ ^[Nn] ]] && { info "Aborting. Move files from /etc/clawav/quarantine/ first."; exit 0; }
+fi
+
+# ── 12. Remove config ────────────────────────────────────────────────────────
 log "Removing configuration..."
 sudo rm -rf /etc/clawav
 
-# ── 11. Remove data (unless --keep-data) ─────────────────────────────────────
+# ── 13. Remove data (unless --keep-data) ─────────────────────────────────────
 if $KEEP_DATA; then
     info "Keeping logs and audit data at /var/log/clawav/"
 else
@@ -204,15 +231,17 @@ else
 fi
 sudo rm -rf /var/run/clawav
 
-# ── 12. Remove clawav system user ────────────────────────────────────────────
+# ── 15. Remove clawav system user ────────────────────────────────────────────
 if id -u clawav &>/dev/null; then
     log "Removing clawav system user..."
     sudo userdel clawav 2>/dev/null || true
 fi
 
-# ── 13. Unlock audit rules ───────────────────────────────────────────────────
+# ── 14. Remove audit rules file ───────────────────────────────────────────────
+log "Removing audit rules..."
+sudo rm -f /etc/audit/rules.d/clawav.rules
 if command -v auditctl &>/dev/null; then
-    log "Unlocking audit rules..."
+    sudo augenrules --load 2>/dev/null || true
     sudo auditctl -e 1 2>/dev/null || warn "Audit rules locked — will unlock on reboot"
 fi
 
@@ -223,13 +252,15 @@ echo -e "${GREEN}║  ✅ ClawAV uninstalled successfully                       
 echo -e "${GREEN}╠══════════════════════════════════════════════════════════════╣${NC}"
 echo -e "${GREEN}║                                                              ║${NC}"
 echo -e "${GREEN}║  Removed:                                                    ║${NC}"
-echo -e "${GREEN}║    • Binaries (/usr/local/bin/clawav, clawsudo)             ║${NC}"
-echo -e "${GREEN}║    • Config (/etc/clawav/)                                  ║${NC}"
+echo -e "${GREEN}║    • Binaries (clawav, clawsudo, clawav-tray)               ║${NC}"
+echo -e "${GREEN}║    • Config + quarantine (/etc/clawav/)                     ║${NC}"
 echo -e "${GREEN}║    • Systemd service                                        ║${NC}"
-echo -e "${GREEN}║    • AppArmor profile                                       ║${NC}"
-echo -e "${GREEN}║    • Sudoers restrictions                                   ║${NC}"
+echo -e "${GREEN}║    • Tray autostart entry                                   ║${NC}"
+echo -e "${GREEN}║    • AppArmor profile (clawav.deny-agent)                   ║${NC}"
+echo -e "${GREEN}║    • Sudoers (clawav-deny + 010_pi-nopasswd)                ║${NC}"
 echo -e "${GREEN}║    • Kernel hardening sysctl                                ║${NC}"
 echo -e "${GREEN}║    • LD_PRELOAD guard                                       ║${NC}"
+echo -e "${GREEN}║    • Audit rules (/etc/audit/rules.d/clawav.rules)          ║${NC}"
 echo -e "${GREEN}║    • Immutable file attributes                              ║${NC}"
 if ! $KEEP_DATA; then
 echo -e "${GREEN}║    • Logs and audit chain                                   ║${NC}"
