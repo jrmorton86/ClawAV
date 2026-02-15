@@ -77,14 +77,14 @@ ClawAV installs auditd watch rules with special keys:
 
 ### Main Entry Point
 
-`tail_audit_log_with_behavior_and_policy()` is the primary function. It:
+`tail_audit_log_with_behavior_and_policy()` is the primary function (see also [ALERT-PIPELINE.md](ALERT-PIPELINE.md#alert-sources) for how alerts flow downstream). It:
 
 1. Seeks to the end of the audit log
 2. Polls for new lines every 500ms
 3. For each line, runs the event through (in order):
    - **Tamper detection** (`check_tamper_event`)
    - **Policy engine** (user-configurable rules)
-   - **SecureClaw pattern matching** (threat intelligence patterns)
+   - **SecureClaw pattern matching** (`check_command`) — see [SECURITY-SCANNERS.md](SECURITY-SCANNERS.md#secureclaw-pattern-engine)
    - **Behavior detection** (hardcoded rules — see §2)
    - **Base alert generation** (`event_to_alert`)
 
@@ -212,7 +212,9 @@ Spawns `journalctl -k -f -o json --since now` (kernel messages in JSON format). 
 
 ### `tail_journald_ssh`
 
-Spawns `journalctl -u ssh -u sshd -f -o cat --since now` and classifies SSH events:
+Spawns `journalctl -u ssh -u sshd -f -o cat --since now` and classifies SSH events. This is spawned as a separate task when `[ssh].enabled = true` in the config.
+
+**Source tag:** `"ssh"`
 
 | Log Content | Severity | Alert Tag |
 |---|---|---|
@@ -246,7 +248,7 @@ When an inode change is detected, ClawAV calls `crate::sentinel::is_log_rotation
 
 ### Polling
 
-`monitor_log_integrity()` runs in a loop with a configurable interval (default: periodic checks). It tracks `last_size` and `last_inode` across iterations.
+`monitor_log_integrity()` runs in a loop with a configurable interval. In `main.rs`, the interval is set to **30 seconds**. It tracks `last_size` and `last_inode` across iterations. The first check establishes baseline values (no alert generated).
 
 ### Scanner Integration
 
@@ -348,7 +350,7 @@ Hosts prefixed with `*.` match any subdomain: `*.openai.com` matches `api.openai
 
 ### Command Scanning
 
-`check_command(cmd)` extracts URLs from command strings (splitting on whitespace, parsing `http://` and `https://` prefixes), resolves the hostname and port, and validates each against the policy. This integrates with the auditd pipeline — when an EXECVE event contains a URL, netpolicy can flag it.
+`check_command(cmd)` extracts URLs from command strings (splitting on whitespace, parsing `http://` and `https://` prefixes), resolves the hostname and port, and validates each against the policy. Returns a `Vec<Alert>` — one for each blocked URL found. The `extract_host_from_url()` helper handles `user@host` patterns and strips quotes.
 
 ---
 
