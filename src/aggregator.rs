@@ -6,9 +6,11 @@ use crate::alerts::Alert;
 
 /// Configuration for the alert aggregator
 pub struct AggregatorConfig {
-    /// Window for deduplication — alerts with identical source+message
+    /// Window for deduplication — alerts with identical shape
     /// within this window are suppressed
     pub dedup_window: Duration,
+    /// Longer dedup window for scan-prefixed sources
+    pub scan_dedup_window: Duration,
     /// Maximum alerts per source per minute
     pub rate_limit_per_source: u32,
     /// Rate limit window
@@ -19,6 +21,7 @@ impl Default for AggregatorConfig {
     fn default() -> Self {
         Self {
             dedup_window: Duration::from_secs(30),
+            scan_dedup_window: Duration::from_secs(3600),
             rate_limit_per_source: 20,
             rate_limit_window: Duration::from_secs(60),
         }
@@ -56,9 +59,14 @@ impl Aggregator {
         }
     }
 
-    /// Generate a dedup key from an alert
+    /// Generate a fuzzy dedup key from an alert.
+    /// Replaces ASCII digits with '#' so alerts differing only in
+    /// numbers (PIDs, counts, timestamps) share the same shape.
     fn dedup_key(alert: &Alert) -> String {
-        format!("{}:{}", alert.source, alert.message)
+        let shape: String = alert.message.chars().map(|c| {
+            if c.is_ascii_digit() { '#' } else { c }
+        }).collect();
+        format!("{}:{}", alert.source, shape)
     }
 
     /// Check if an alert is a duplicate within the dedup window
@@ -66,8 +74,14 @@ impl Aggregator {
         let key = Self::dedup_key(alert);
         let now = Instant::now();
 
+        let window = if alert.source.starts_with("scan:") {
+            self.config.scan_dedup_window
+        } else {
+            self.config.dedup_window
+        };
+
         if let Some(entry) = self.dedup_map.get_mut(&key) {
-            if now.duration_since(entry.last_seen) < self.config.dedup_window {
+            if now.duration_since(entry.last_seen) < window {
                 entry.suppressed_count += 1;
                 entry.last_seen = now;
                 return true;
@@ -106,7 +120,7 @@ impl Aggregator {
     /// Periodically clean up old entries to prevent unbounded memory growth
     fn cleanup(&mut self) {
         let now = Instant::now();
-        let dedup_window = self.config.dedup_window;
+        let dedup_window = self.config.dedup_window.max(self.config.scan_dedup_window);
         let rate_window = self.config.rate_limit_window;
 
         self.dedup_map.retain(|_, entry| {
@@ -258,6 +272,26 @@ mod tests {
     }
 
     #[test]
+    fn test_fuzzy_dedup_strips_numbers() {
+        let mut agg = Aggregator::new(AggregatorConfig::default());
+        let a1 = make_alert("scan:cron", "Found 3 suspicious crontab entries for uid 1000", Severity::Warning);
+        let a2 = make_alert("scan:cron", "Found 4 suspicious crontab entries for uid 1000", Severity::Warning);
+
+        assert!(agg.process(a1).is_some());
+        assert!(agg.process(a2).is_none()); // fuzzy match — same shape
+    }
+
+    #[test]
+    fn test_fuzzy_dedup_different_shapes_pass() {
+        let mut agg = Aggregator::new(AggregatorConfig::default());
+        let a1 = make_alert("auditd", "exec: curl http://api.example.com", Severity::Info);
+        let a2 = make_alert("auditd", "exec: wget http://evil.com", Severity::Info);
+
+        assert!(agg.process(a1).is_some());
+        assert!(agg.process(a2).is_some()); // different commands, different shape
+    }
+
+    #[test]
     fn test_rate_limiting() {
         let mut agg = Aggregator::new(AggregatorConfig {
             rate_limit_per_source: 2,
@@ -265,10 +299,10 @@ mod tests {
             ..Default::default()
         });
 
-        // Need different messages to avoid dedup
-        let a1 = make_alert("network", "conn 1", Severity::Info);
-        let a2 = make_alert("network", "conn 2", Severity::Info);
-        let a3 = make_alert("network", "conn 3", Severity::Info);
+        // Need different messages (with different shapes) to avoid dedup
+        let a1 = make_alert("network", "conn from alpha", Severity::Info);
+        let a2 = make_alert("network", "conn from bravo", Severity::Info);
+        let a3 = make_alert("network", "conn from charlie", Severity::Info);
 
         assert!(agg.process(a1).is_some());
         assert!(agg.process(a2).is_some());
