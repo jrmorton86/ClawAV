@@ -156,6 +156,7 @@ fn run_cmd_with_sudo(cmd: &str, args: &[&str]) -> Result<String, String> {
 
 // --- Individual scan functions ---
 
+/// Audit user and system crontabs for suspicious entries (wget, curl, nc, base64, etc.).
 pub fn scan_crontab_audit() -> ScanResult {
     let mut issues = Vec::new();
 
@@ -203,6 +204,7 @@ pub fn scan_crontab_audit() -> ScanResult {
     }
 }
 
+/// Find world-writable files in sensitive directories (`/etc`, `/usr/bin`, `/var/log`, etc.).
 pub fn scan_world_writable_files() -> ScanResult {
     let sensitive_dirs = ["/etc", "/usr/bin", "/usr/sbin", "/bin", "/sbin", "/var/log"];
     let mut issues = Vec::new();
@@ -229,6 +231,7 @@ pub fn scan_world_writable_files() -> ScanResult {
     }
 }
 
+/// Enumerate SUID/SGID binaries system-wide and flag any not in the known-safe list.
 pub fn scan_suid_sgid_binaries() -> ScanResult {
     let mut suid_files = Vec::new();
     let mut sgid_files = Vec::new();
@@ -274,6 +277,7 @@ pub fn scan_suid_sgid_binaries() -> ScanResult {
     }
 }
 
+/// Check loaded kernel modules for suspicious names (rootkit, backdoor, keylog, etc.).
 pub fn scan_kernel_modules() -> ScanResult {
     match run_cmd("lsmod", &[]) {
         Ok(output) => {
@@ -307,6 +311,7 @@ pub fn scan_kernel_modules() -> ScanResult {
     }
 }
 
+/// Check Docker for privileged containers, world-writable sockets, and host-network usage.
 pub fn scan_docker_security() -> ScanResult {
     // First check if Docker is running
     match run_cmd("systemctl", &["is-active", "docker"]) {
@@ -359,6 +364,7 @@ pub fn scan_docker_security() -> ScanResult {
     }
 }
 
+/// Check `/etc/login.defs` and PAM configuration for password policy strength.
 pub fn scan_password_policy() -> ScanResult {
     let mut issues = Vec::new();
 
@@ -414,6 +420,7 @@ pub fn scan_password_policy() -> ScanResult {
     }
 }
 
+/// Check for excessive open file descriptors, suspicious network connections, and FD-heavy processes.
 pub fn scan_open_file_descriptors() -> ScanResult {
     let mut issues = Vec::new();
 
@@ -456,6 +463,7 @@ pub fn scan_open_file_descriptors() -> ScanResult {
     }
 }
 
+/// Verify `/etc/resolv.conf` has nameservers configured and check for DNS hijacking indicators.
 pub fn scan_dns_resolver() -> ScanResult {
     match std::fs::read_to_string("/etc/resolv.conf") {
         Ok(content) => {
@@ -496,6 +504,7 @@ pub fn scan_dns_resolver() -> ScanResult {
     }
 }
 
+/// Check NTP synchronization status via `timedatectl`, `ntp`, or `chronyd`.
 pub fn scan_ntp_sync() -> ScanResult {
     // Try timedatectl first (systemd)
     if let Ok(output) = run_cmd("timedatectl", &["show", "--property=NTPSynchronized,NTP"]) {
@@ -528,6 +537,7 @@ pub fn scan_ntp_sync() -> ScanResult {
     }
 }
 
+/// Check journalctl and auth.log for excessive failed SSH login attempts and potential brute-force success.
 pub fn scan_failed_login_attempts() -> ScanResult {
     let mut issues = Vec::new();
 
@@ -565,6 +575,7 @@ pub fn scan_failed_login_attempts() -> ScanResult {
     }
 }
 
+/// Detect zombie processes and high-CPU consumers via `ps aux`.
 pub fn scan_zombie_processes() -> ScanResult {
     match run_cmd("ps", &["aux"]) {
         Ok(output) => {
@@ -610,6 +621,7 @@ pub fn scan_zombie_processes() -> ScanResult {
     }
 }
 
+/// Check swap encryption, `/tmp` mount options (noexec/nosuid/nodev), and `/dev/shm` security.
 pub fn scan_swap_tmpfs_security() -> ScanResult {
     let mut issues = Vec::new();
 
@@ -667,6 +679,7 @@ pub fn scan_swap_tmpfs_security() -> ScanResult {
     }
 }
 
+/// Scan environment variables for suspicious LD_PRELOAD, proxy configs, debug flags, and leaked credentials.
 pub fn scan_environment_variables() -> ScanResult {
     let mut issues = Vec::new();
 
@@ -711,6 +724,7 @@ pub fn scan_environment_variables() -> ScanResult {
     }
 }
 
+/// Verify OS package integrity via `dpkg --verify` or `rpm -Va`.
 pub fn scan_package_integrity() -> ScanResult {
     let mut issues = Vec::new();
 
@@ -756,6 +770,7 @@ pub fn scan_package_integrity() -> ScanResult {
     }
 }
 
+/// Check that core dumps are disabled (systemd-coredump, ulimit, core_pattern) and flag recent dumps.
 pub fn scan_core_dump_settings() -> ScanResult {
     let mut issues = Vec::new();
 
@@ -800,6 +815,7 @@ pub fn scan_core_dump_settings() -> ScanResult {
     }
 }
 
+/// Check for promiscuous-mode interfaces, unusual tunnel/tap devices, IP forwarding, and VPN routes.
 pub fn scan_network_interfaces() -> ScanResult {
     let mut issues = Vec::new();
 
@@ -860,6 +876,7 @@ pub fn scan_network_interfaces() -> ScanResult {
     }
 }
 
+/// Verify that the ClawAV systemd service has security hardening directives (NoNewPrivileges, ProtectSystem, etc.).
 pub fn scan_systemd_hardening() -> ScanResult {
     let mut issues = Vec::new();
 
@@ -908,6 +925,7 @@ pub fn scan_systemd_hardening() -> ScanResult {
     }
 }
 
+/// Audit user accounts: non-root UID 0 users, passwordless shell accounts, and excessive sudo group members.
 pub fn scan_user_account_audit() -> ScanResult {
     let mut issues = Vec::new();
 
@@ -987,6 +1005,7 @@ pub fn scan_user_account_audit() -> ScanResult {
     }
 }
 
+/// Check UFW firewall status and rule count.
 pub fn scan_firewall() -> ScanResult {
     match run_cmd_with_sudo("ufw", &["status", "verbose"]) {
         Ok(output) => parse_ufw_status(&output),
@@ -994,6 +1013,7 @@ pub fn scan_firewall() -> ScanResult {
     }
 }
 
+/// Parse `ufw status verbose` output into a scan result (testable helper).
 pub fn parse_ufw_status(output: &str) -> ScanResult {
     if !output.contains("Status: active") {
         return ScanResult::new("firewall", ScanStatus::Fail, "Firewall is NOT active");
@@ -1012,6 +1032,7 @@ pub fn parse_ufw_status(output: &str) -> ScanResult {
     }
 }
 
+/// Check auditd status: enabled, immutable mode, and loaded rule count.
 pub fn scan_auditd() -> ScanResult {
     match run_cmd_with_sudo("auditctl", &["-s"]) {
         Ok(output) => parse_auditctl_status(&output),
@@ -1019,6 +1040,7 @@ pub fn scan_auditd() -> ScanResult {
     }
 }
 
+/// Parse `auditctl -s` output into a scan result (testable helper).
 pub fn parse_auditctl_status(output: &str) -> ScanResult {
     let enabled = output
         .lines()
@@ -1046,6 +1068,7 @@ pub fn parse_auditctl_status(output: &str) -> ScanResult {
     }
 }
 
+/// Verify ClawAV binary and config integrity against stored SHA-256 checksums.
 pub fn scan_integrity() -> ScanResult {
     // Check if binary exists and get its hash
     let _binary_path = "/usr/local/bin/clawav";
@@ -1091,6 +1114,7 @@ fn compute_file_sha256(path: &str) -> Result<String, String> {
     Ok(hex::encode(hash))
 }
 
+/// Check for pending system package updates via `apt list --upgradable`.
 pub fn scan_updates() -> ScanResult {
     match run_cmd("bash", &["-c", "apt list --upgradable 2>/dev/null | tail -n +2 | wc -l"]) {
         Ok(output) => {
@@ -1105,6 +1129,7 @@ pub fn scan_updates() -> ScanResult {
     }
 }
 
+/// Check whether the SSH daemon is running (warns if active — should be disabled on hardened hosts).
 pub fn scan_ssh() -> ScanResult {
     match run_cmd("systemctl", &["is-active", "ssh"]) {
         Ok(output) => {
@@ -1119,6 +1144,7 @@ pub fn scan_ssh() -> ScanResult {
     }
 }
 
+/// List TCP listening sockets and flag any not in the expected set (ClawAV API port 18791).
 pub fn scan_listening_services() -> ScanResult {
     match run_cmd("ss", &["-tlnp"]) {
         Ok(output) => {
@@ -1144,6 +1170,7 @@ pub fn scan_listening_services() -> ScanResult {
     }
 }
 
+/// Check root filesystem disk usage percentage.
 pub fn scan_resources() -> ScanResult {
     match run_cmd("df", &["-h", "/"]) {
         Ok(output) => parse_disk_usage(&output),
@@ -1151,6 +1178,7 @@ pub fn scan_resources() -> ScanResult {
     }
 }
 
+/// Check CPU side-channel vulnerability mitigations (Spectre, Meltdown, MDS, etc.) via sysfs.
 pub fn scan_sidechannel_mitigations() -> ScanResult {
     let mitigations = [
         "spectre_v1",
@@ -1205,6 +1233,7 @@ pub fn scan_sidechannel_mitigations() -> ScanResult {
     }
 }
 
+/// Parse `df -h /` output to extract usage percentage (testable helper).
 pub fn parse_disk_usage(output: &str) -> ScanResult {
     // Second line, 5th column is Use%
     if let Some(line) = output.lines().nth(1) {
@@ -1288,6 +1317,7 @@ pub fn scan_immutable_flags() -> ScanResult {
 
 /// Parse lsattr output and check for immutable flag (testable helper)
 #[allow(dead_code)]
+/// Parse lsattr output and check for immutable flag (testable helper).
 pub fn check_lsattr_immutable(lsattr_output: &str) -> bool {
     let attrs = lsattr_output.split_whitespace().next().unwrap_or("");
     attrs.contains('i')
@@ -1341,6 +1371,7 @@ pub fn scan_apparmor_protection() -> ScanResult {
     }
 }
 
+/// Check the age of the SecureClaw vendor pattern database via its git log.
 pub fn scan_secureclaw_sync() -> ScanResult {
     // Try configured path first, then common locations
     let candidates = [
@@ -1398,6 +1429,14 @@ pub fn scan_secureclaw_sync() -> ScanResult {
 }
 
 impl SecurityScanner {
+    /// Execute all 30+ security checks and return the results.
+    ///
+    /// Includes firewall, auditd, integrity, updates, SSH, listening services,
+    /// resources, side-channel mitigations, immutable flags, AppArmor, SecureClaw,
+    /// audit log health, crontab, world-writable files, SUID/SGID, kernel modules,
+    /// Docker, password policy, open FDs, DNS, NTP, failed logins, zombie processes,
+    /// swap/tmpfs, environment variables, packages, core dumps, network interfaces,
+    /// systemd hardening, user accounts, cognitive integrity, and OpenClaw-specific checks.
     pub fn run_all_scans() -> Vec<ScanResult> {
         let mut results = vec![
             scan_firewall(),
@@ -1540,7 +1579,9 @@ fn scan_openclaw_security() -> Vec<ScanResult> {
     results
 }
 
-/// Spawn periodic scan task
+/// Spawn periodic scan task that runs all checks every `interval_secs` seconds.
+///
+/// Results are stored in `scan_store` and non-passing results are forwarded as alerts.
 pub async fn run_periodic_scans(
     interval_secs: u64,
     raw_tx: mpsc::Sender<Alert>,

@@ -390,7 +390,7 @@ pub async fn tail_my_source(
 
 ### Step 2: Register the Module
 
-In `src/lib.rs` (or `src/main.rs`), add:
+In `src/main.rs`, add:
 
 ```rust
 pub mod mymonitor;

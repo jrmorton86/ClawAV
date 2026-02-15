@@ -172,6 +172,7 @@ pub fn init_admin_key(hash_path: &Path) -> Result<()> {
 }
 
 impl AdminSocket {
+    /// Create a new admin socket handler with the given paths and alert channel.
     pub fn new(
         socket_path: PathBuf,
         key_hash_path: PathBuf,
@@ -192,6 +193,7 @@ impl AdminSocket {
         self.paused_until.clone()
     }
 
+    /// Start listening for connections on the Unix socket. Runs until the process exits.
     pub async fn run(&self) -> Result<()> {
         // Remove stale socket
         let _ = std::fs::remove_file(&self.socket_path);

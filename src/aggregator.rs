@@ -58,6 +58,7 @@ pub struct Aggregator {
 }
 
 impl Aggregator {
+    /// Create a new aggregator with the given configuration.
     pub fn new(config: AggregatorConfig) -> Self {
         Self {
             config,

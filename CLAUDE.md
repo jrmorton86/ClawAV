@@ -87,7 +87,7 @@ Sources (auditd, network, falco, samhain, SSH, firewall, scanner, sentinel, prox
 | `admin.rs` | Admin key generation (Argon2), verification, Unix socket for authenticated commands |
 | `audit_chain.rs` | Hash-linked integrity log (SHA-256 chain, tamper-evident) |
 | `auditd.rs` | Audit log parser (SYSCALL/EXECVE/AVC records), aarch64 syscall table, user filtering |
-| `behavior.rs` | Hardcoded behavioral detection rules (50+ patterns across 5 threat categories) |
+| `behavior.rs` | Hardcoded behavioral detection rules (~200 patterns across 5 threat categories) |
 | `cognitive.rs` | Cognitive file protection — SHA-256 baselines for identity files (SOUL.md, etc.) |
 | `secureclaw.rs` | Pattern engine loading 4 JSON databases (injection, dangerous commands, privacy, supply chain) |
 | `sentinel.rs` | Real-time file watching via `notify` (inotify), shadow copies, quarantine, content scanning |

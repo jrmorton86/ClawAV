@@ -217,7 +217,7 @@ blocked_hosts = ["evil.com"]
 enabled = true                  # Monitor SSH login events via journald
 ```
 
-> 📖 **Full configuration reference:** See [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) for every field, type, default value, and YAML example.
+> 📖 **Full configuration reference:** See [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) for every field, type, default value, and TOML example.
 
 ## Usage
 
