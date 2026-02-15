@@ -33,6 +33,7 @@ Quick map to every doc in this project. Start with what you need.
 | Document | What's in it |
 |----------|-------------|
 | [CLAUDE.md](../CLAUDE.md) | LLM onboarding — module guide, key patterns, common tasks, glossary |
+| [SOURCE-INVENTORY.md](SOURCE-INVENTORY.md) | Complete inventory of all public items (structs, enums, functions) |
 | [AUDIT-LOG.md](AUDIT-LOG.md) | Internal documentation audit log (maintainer reference, not user-facing) |
 
 ## Suggested Reading Order
