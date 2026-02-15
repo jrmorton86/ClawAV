@@ -32,7 +32,7 @@ Agent → clawsudo <command> → Policy Check → sudo <command> (or deny)
 2. **Load policies** — reads all `.yaml`/`.yml` files from `/etc/clawav/policies/` and `./policies/`
 3. **Fail-secure** — if no policy files are found, **all commands are denied** (exit code 77)
 4. **Evaluate** — first matching rule wins; rules are checked in file order
-5. **Enforce** — based on the matched rule's enforcement action:
+5. **Enforce** — based on the matched rule's `enforcement` field. If `enforcement` is not set, it's inferred from the `action` field: `critical`/`block` → deny, anything else → ask.
 
 ### Enforcement Actions
 
@@ -106,14 +106,16 @@ rules:
 |---|---|---|
 | `command` | List of binary basenames (case-insensitive) | clawsudo + detection |
 | `command_contains` | Substrings matched against full command (case-insensitive) | clawsudo + detection |
-| `file_access` | Glob patterns matched against file paths | Detection only |
-| `exclude_args` | If any substring appears in args, the rule is skipped | Detection only |
+| `file_access` | Glob patterns matched against file paths (uses `glob_match` crate) | Detection only |
+| `exclude_args` | If any substring appears in args, the rule is skipped (whitelist) | Detection only |
+
+> **Note:** clawsudo has its own independent policy loader (`src/bin/clawsudo.rs`) that only supports `command` and `command_contains` match criteria. The detection engine (`src/policy.rs`) supports all five criteria above.
 
 ### Rule Evaluation
 
 **clawsudo:** First match wins. Order matters — deny rules must come before allow rules.
 
-**Detection engine:** All rules are evaluated; the highest-severity match wins. Enforcement-only rules (those with `enforcement` field) are skipped in the detection pipeline. Files prefixed `clawsudo` are also skipped.
+**Detection engine:** All rules are evaluated; the highest-severity match wins. Enforcement-only rules (those with `enforcement` field) are skipped in the detection pipeline. YAML files prefixed `clawsudo` are also skipped to avoid double-evaluation. The detection engine feeds into the alert pipeline — see [ALERT-PIPELINE.md](ALERT-PIPELINE.md) for how policy alerts are routed.
 
 ### Severity Levels
 
@@ -127,7 +129,7 @@ rules:
 
 ## 3. Admin Key System
 
-ClawAV provides authenticated admin control via a Unix domain socket at `/var/run/clawav/admin.sock`.
+ClawAV provides authenticated admin control via a Unix domain socket at `/var/run/clawav/admin.sock` (falls back to `/tmp/clawav-<uid>/admin.sock` if the primary path is unavailable).
 
 ### Key Generation
 
@@ -147,7 +149,7 @@ On first run, a 256-bit admin key is generated:
 ### Key Management
 
 ```bash
-# Key hash is stored at (configurable):
+# Key hash is stored at:
 /etc/clawav/admin.key.hash
 
 # To regenerate: delete the hash file and restart ClawAV
