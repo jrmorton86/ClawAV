@@ -1,6 +1,6 @@
 [package]
 name = "clawav"
-version = "0.2.6"
+version = "0.2.7"
 edition = "2021"
 description = "Tamper-proof security watchdog for AI agents"
 license = "MIT"
