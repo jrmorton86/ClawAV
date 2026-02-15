@@ -1253,40 +1253,51 @@ pub fn parse_disk_usage(output: &str) -> ScanResult {
 /// Static entry point for running all security scans.
 pub struct SecurityScanner;
 
-/// Check that immutable (chattr +i) flags are set on critical ClawAV files
+/// Check that immutable (chattr +i) flags are set on critical ClawAV files.
+/// Auto-remediates: if a file exists but lacks the immutable flag, sets it
+/// automatically and reports as a warning (not a failure).
 pub fn scan_immutable_flags() -> ScanResult {
     let critical_files = [
         "/usr/local/bin/clawav",
+        "/usr/local/bin/clawsudo",
+        "/usr/local/bin/clawav-tray",
         "/etc/clawav/config.toml",
         "/etc/clawav/admin.key.hash",
         "/etc/systemd/system/clawav.service",
         "/etc/sudoers.d/clawav-deny",
     ];
 
+    // Files that may not exist (optional or created later)
+    let optional_files = [
+        "/usr/local/bin/clawav-tray",
+        "/etc/clawav/admin.key.hash",
+    ];
+
     let mut missing = Vec::new();
-    let mut not_immutable = Vec::new();
+    let mut remediated = Vec::new();
+    let mut failed_remediation = Vec::new();
 
     for path in &critical_files {
         if !std::path::Path::new(path).exists() {
-            // admin.key.hash may not exist yet on fresh install
-            if !path.contains("admin.key.hash") {
+            if !optional_files.contains(path) {
                 missing.push(*path);
             }
             continue;
         }
 
-        match run_cmd("lsattr", &[path]) {
+        let needs_fix = match run_cmd("lsattr", &[path]) {
             Ok(output) => {
-                // lsattr output: "----i---------e------- /path/to/file"
-                // The 'i' flag should be present in the attribute string
                 let attrs = output.split_whitespace().next().unwrap_or("");
-                if !attrs.contains('i') {
-                    not_immutable.push(*path);
-                }
+                !attrs.contains('i')
             }
-            Err(_) => {
-                // lsattr not available or failed — can't verify
-                not_immutable.push(*path);
+            Err(_) => true,
+        };
+
+        if needs_fix {
+            // Auto-remediate: set the immutable flag
+            match run_cmd("chattr", &["+i", path]) {
+                Ok(_) => remediated.push(*path),
+                Err(_) => failed_remediation.push(*path),
             }
         }
     }
@@ -1297,13 +1308,22 @@ pub fn scan_immutable_flags() -> ScanResult {
             ScanStatus::Fail,
             &format!("Critical files MISSING: {}", missing.join(", ")),
         )
-    } else if !not_immutable.is_empty() {
+    } else if !failed_remediation.is_empty() {
         ScanResult::new(
             "immutable_flags",
             ScanStatus::Fail,
             &format!(
-                "🚨 Immutable flag MISSING on: {} — possible tampering!",
-                not_immutable.join(", ")
+                "🚨 Immutable flag MISSING and could not auto-fix: {} — possible tampering!",
+                failed_remediation.join(", ")
+            ),
+        )
+    } else if !remediated.is_empty() {
+        ScanResult::new(
+            "immutable_flags",
+            ScanStatus::Warn,
+            &format!(
+                "🔧 Auto-fixed immutable flags on: {}",
+                remediated.join(", ")
             ),
         )
     } else {

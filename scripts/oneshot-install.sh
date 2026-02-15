@@ -869,6 +869,9 @@ chattr +i /usr/local/bin/clawav
 chattr +i /usr/local/bin/clawsudo
 chattr +i /etc/clawav/config.toml
 chattr +i /etc/systemd/system/clawav.service
+[[ -f /usr/local/bin/clawav-tray ]] && chattr +i /usr/local/bin/clawav-tray
+[[ -f /etc/clawav/admin.key.hash ]] && chattr +i /etc/clawav/admin.key.hash
+[[ -f /etc/sudoers.d/clawav-deny ]] && chattr +i /etc/sudoers.d/clawav-deny
 
 # ── AppArmor profile ─────────────────────────────────────────────────────────
 if command -v apparmor_parser &>/dev/null; then
