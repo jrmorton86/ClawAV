@@ -472,7 +472,7 @@ impl Default for SentinelConfig {
                 WatchPathConfig {
                     path: "/home/openclaw/.openclaw/agents/main/agent/auth-profiles.json".to_string(),
                     patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Protected,
+                    policy: WatchPolicy::Watched,
                 },
                 // Session metadata monitoring
                 WatchPathConfig {
