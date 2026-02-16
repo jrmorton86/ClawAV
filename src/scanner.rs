@@ -1911,6 +1911,12 @@ pub async fn run_periodic_scans(
     scan_store: SharedScanResults,
     openclaw_config: crate::config::OpenClawConfig,
 ) {
+    use std::collections::HashMap;
+    use std::time::Instant;
+
+    let mut last_emitted: HashMap<String, Instant> = HashMap::new();
+    let cooldown = Duration::from_secs(24 * 3600); // 24 hours
+
     loop {
         // Run scans in blocking task since they use Command
         let oc_cfg = openclaw_config.clone();
@@ -1924,9 +1930,22 @@ pub async fn run_periodic_scans(
             *store = results.clone();
         }
 
-        // Convert to alerts and send
+        // Convert to alerts and send (with 24h deduplication)
+        let now = Instant::now();
         for result in &results {
             if let Some(alert) = result.to_alert() {
+                let status_str = match result.status {
+                    ScanStatus::Pass => "pass",
+                    ScanStatus::Warn => "warn",
+                    ScanStatus::Fail => "fail",
+                };
+                let dedup_key = format!("{}:{}", result.category, status_str);
+                if let Some(last) = last_emitted.get(&dedup_key) {
+                    if now.duration_since(*last) < cooldown {
+                        continue; // Skip duplicate within cooldown
+                    }
+                }
+                last_emitted.insert(dedup_key, now);
                 let _ = raw_tx.send(alert).await;
             }
         }
@@ -2234,5 +2253,36 @@ rules 0
         assert_eq!(results.len(), 2);
         assert!(results.iter().any(|r| r.status == ScanStatus::Fail));
         assert!(results.iter().any(|r| r.status == ScanStatus::Warn));
+    }
+
+    #[test]
+    fn test_scan_dedup_suppresses_repeats() {
+        use std::collections::HashMap;
+        use std::time::{Duration, Instant};
+
+        let mut last_emitted: HashMap<String, Instant> = HashMap::new();
+        let cooldown = Duration::from_secs(24 * 3600);
+
+        let key = "firewall:warn".to_string();
+        // First time: should emit
+        assert!(!last_emitted.contains_key(&key));
+        last_emitted.insert(key.clone(), Instant::now());
+
+        // Second time: should suppress
+        let last = last_emitted.get(&key).unwrap();
+        assert!(Instant::now().duration_since(*last) < cooldown);
+    }
+
+    #[test]
+    fn test_scan_dedup_allows_status_change() {
+        use std::collections::HashMap;
+        use std::time::Instant;
+
+        let mut last_emitted: HashMap<String, Instant> = HashMap::new();
+        last_emitted.insert("firewall:warn".to_string(), Instant::now());
+
+        // Different status: should emit
+        let new_key = "firewall:pass".to_string();
+        assert!(!last_emitted.contains_key(&new_key));
     }
 }

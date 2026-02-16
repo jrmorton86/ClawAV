@@ -629,4 +629,19 @@ mod tests {
         assert!(paths.iter().any(|p| p.contains("credentials/whatsapp")),
             "Should watch WhatsApp credentials");
     }
+
+    #[test]
+    fn test_exclude_content_scan_pattern() {
+        let config = SentinelConfig::default();
+        assert!(!config.exclude_content_scan.is_empty(),
+            "Should have default exclude_content_scan patterns");
+
+        let path = "/home/openclaw/.openclaw/workspace/superpowers/skills/brainstorming/SKILL.md";
+        let excluded = config.exclude_content_scan.iter().any(|excl| path.contains(excl));
+        assert!(excluded, "Skills directory should be excluded from content scan");
+
+        let path2 = "/home/openclaw/.openclaw/workspace/SOUL.md";
+        let excluded2 = config.exclude_content_scan.iter().any(|excl| path2.contains(excl));
+        assert!(!excluded2, "SOUL.md should NOT be excluded from content scan");
+    }
 }

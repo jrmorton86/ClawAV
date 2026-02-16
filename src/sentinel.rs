@@ -436,6 +436,7 @@ mod tests {
             scan_content: false,
             max_file_size_kb: 1024,
             content_scan_excludes: vec![],
+            exclude_content_scan: vec![],
         };
 
         let (tx, mut rx) = mpsc::channel::<Alert>(16);
@@ -487,6 +488,7 @@ mod tests {
             scan_content: false,
             max_file_size_kb: 1024,
             content_scan_excludes: vec![],
+            exclude_content_scan: vec![],
         };
 
         let (tx, mut rx) = mpsc::channel::<Alert>(16);
@@ -615,6 +617,7 @@ mod tests {
             content_scan_excludes: vec![
                 "**/.openclaw/**/auth-profiles.json".to_string(),
             ],
+            exclude_content_scan: vec![],
         };
 
         let (tx, mut rx) = mpsc::channel::<Alert>(16);

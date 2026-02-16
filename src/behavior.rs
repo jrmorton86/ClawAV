@@ -355,6 +355,30 @@ const BUILD_TOOL_BASES: &[&str] = &[
 /// Classify a parsed audit event against known attack patterns.
 /// Returns Some((category, severity)) if the event matches a rule, None otherwise.
 pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Severity)> {
+    // Check raw audit record for LD_PRELOAD environment variable injection.
+    // This catches `LD_PRELOAD=/tmp/evil.so ls` where the env var is set
+    // before the command but may not appear in the parsed command args.
+    if !event.raw.is_empty() && event.raw.contains("LD_PRELOAD=") {
+        // Don't flag ClawAV's own guard or build tools
+        if !event.raw.contains("clawav") && !event.raw.contains("clawguard") {
+            let raw_binary = event.args.first().map(|s| {
+                s.rsplit('/').next().unwrap_or(s).to_string()
+            }).unwrap_or_default();
+            if !BUILD_TOOL_BASES.iter().any(|t| raw_binary.starts_with(t)) {
+                // Check parent too
+                let parent_suppressed = if let Some(ref ppid_exe) = event.ppid_exe {
+                    let parent_base = ppid_exe.rsplit('/').next().unwrap_or(ppid_exe);
+                    BUILD_TOOL_BASES.iter().any(|t| parent_base.starts_with(t))
+                } else {
+                    false
+                };
+                if !parent_suppressed {
+                    return Some((BehaviorCategory::SecurityTamper, Severity::Critical));
+                }
+            }
+        }
+    }
+
     // Check EXECVE events with actual commands
     if let Some(ref cmd) = event.command {
         let cmd_lower = cmd.to_lowercase();
@@ -430,6 +454,16 @@ pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Sever
             // Compiling static binaries to bypass dynamic linking
             for pattern in STATIC_COMPILE_PATTERNS {
                 if cmd.contains(pattern) {
+                    // Suppress if the binary itself is a build tool or parent is a build tool
+                    if BUILD_TOOL_BASES.iter().any(|t| binary.starts_with(t)) {
+                        break; // Normal compilation flag, not an attack
+                    }
+                    if let Some(ref ppid_exe) = event.ppid_exe {
+                        let parent_base = ppid_exe.rsplit('/').next().unwrap_or(ppid_exe);
+                        if BUILD_TOOL_BASES.iter().any(|t| parent_base.starts_with(t)) {
+                            break; // Parent is a build tool — suppress
+                        }
+                    }
                     return Some((BehaviorCategory::SecurityTamper, Severity::Warning));
                 }
             }
@@ -548,6 +582,13 @@ pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Sever
         // --- WARNING: Compiler invocation (could be building exploits) ---
         for pattern in COMPILER_PATTERNS {
             if binary == *pattern || cmd.contains(pattern) {
+                // Suppress if parent is a build tool (normal compilation)
+                if let Some(ref ppid_exe) = event.ppid_exe {
+                    let parent_base = ppid_exe.rsplit('/').next().unwrap_or(ppid_exe);
+                    if BUILD_TOOL_BASES.iter().any(|t| parent_base.starts_with(t)) {
+                        break; // Normal build process
+                    }
+                }
                 // More suspicious if compiling from /tmp or with network code
                 if args.iter().any(|a| a.contains("/tmp/") || a.contains("socket") || a.contains("network")) {
                     return Some((BehaviorCategory::SecurityTamper, Severity::Warning));
@@ -1334,7 +1375,18 @@ mod tests {
 
     #[test]
     fn test_static_compilation() {
+        // gcc is a build tool, so -static is suppressed; but an unknown binary with -static is flagged
         let event = make_exec_event(&["gcc", "-static", "-o", "bypass", "bypass.c"]);
+        let result = classify_behavior(&event);
+        // gcc itself is in BUILD_TOOL_BASES, so static compile is not flagged as tamper
+        assert!(result.is_none() || result.unwrap().0 != BehaviorCategory::SecurityTamper,
+            "gcc -static should not be SEC_TAMPER (it's a build tool)");
+    }
+
+    #[test]
+    fn test_static_compilation_unknown_binary() {
+        // An unknown binary compiling statically IS suspicious
+        let event = make_exec_event(&["evil-compiler", "-static", "-o", "bypass", "bypass.c"]);
         let result = classify_behavior(&event);
         assert_eq!(result, Some((BehaviorCategory::SecurityTamper, Severity::Warning)));
     }
@@ -1404,6 +1456,54 @@ mod tests {
         let result = classify_behavior(&event);
         assert!(result.is_none() || result.unwrap().0 != BehaviorCategory::SecurityTamper,
             "collect2 should not be flagged as SEC_TAMPER");
+    }
+
+    // --- LD_PRELOAD env var detection (raw audit record) ---
+
+    #[test]
+    fn test_ld_preload_env_detected_in_raw() {
+        let mut event = make_exec_event(&["ls", "-la"]);
+        event.raw = "type=EXECVE msg=audit(1234): argc=2 a0=\"ls\" a1=\"-la\" LD_PRELOAD=/tmp/evil.so".to_string();
+        let result = classify_behavior(&event);
+        assert_eq!(result, Some((BehaviorCategory::SecurityTamper, Severity::Critical)),
+            "LD_PRELOAD in raw audit record should be detected");
+    }
+
+    #[test]
+    fn test_ld_preload_env_suppressed_for_build_tools() {
+        let mut event = make_exec_event(&["gcc", "test.c", "-o", "test"]);
+        event.raw = "type=EXECVE msg=audit(1234): LD_PRELOAD=/usr/lib/libasan.so".to_string();
+        let result = classify_behavior(&event);
+        assert!(result.is_none() || result.unwrap().0 != BehaviorCategory::SecurityTamper,
+            "Build tools using LD_PRELOAD should be suppressed");
+    }
+
+    #[test]
+    fn test_ld_preload_env_suppressed_for_build_parent() {
+        let mut event = make_exec_event_with_parent(&["ls"], "/usr/bin/make");
+        event.raw = "type=EXECVE LD_PRELOAD=/usr/lib/libasan.so".to_string();
+        let result = classify_behavior(&event);
+        assert!(result.is_none() || result.unwrap().0 != BehaviorCategory::SecurityTamper,
+            "LD_PRELOAD from build tool parent should be suppressed");
+    }
+
+    #[test]
+    fn test_static_compile_suppressed_for_gcc() {
+        let event = make_exec_event(&["gcc", "-static", "-o", "test", "test.c"]);
+        let result = classify_behavior(&event);
+        assert!(result.is_none() || result.unwrap().0 != BehaviorCategory::SecurityTamper,
+            "gcc -static should not be flagged as SEC_TAMPER");
+    }
+
+    #[test]
+    fn test_compiler_suppressed_when_parent_is_cargo() {
+        let event = make_exec_event_with_parent(
+            &["cc", "test.c", "-o", "test"],
+            "/home/user/.cargo/bin/cargo",
+        );
+        let result = classify_behavior(&event);
+        assert!(result.is_none(),
+            "cc invoked by cargo should be fully suppressed");
     }
 }
 
