@@ -232,8 +232,14 @@ impl Sentinel {
         // Scan content if enabled — but skip for Watched files (workspace docs like
         // MEMORY.md legitimately contain IPs, paths, credentials references, etc.
         // that trigger SecureClaw privacy patterns as false positives).
+        // Also skip paths matching content_scan_excludes (e.g. OpenClaw auth stores
+        // that legitimately contain API keys).
         let mut threat_found = false;
-        if self.config.scan_content && policy != Some(WatchPolicy::Watched) {
+        let content_scan_excluded = self.config.content_scan_excludes.iter().any(|pattern| {
+            glob_match::glob_match(pattern, path)
+        });
+        let substring_excluded = self.config.exclude_content_scan.iter().any(|excl| path.contains(excl));
+        if self.config.scan_content && policy != Some(WatchPolicy::Watched) && !content_scan_excluded && !substring_excluded {
             if let Some(ref engine) = self.engine {
                 let content_matches = engine.check_text(&current);
                 let diff_matches = engine.check_text(&diff);
@@ -429,6 +435,7 @@ mod tests {
             debounce_ms: 200,
             scan_content: false,
             max_file_size_kb: 1024,
+            content_scan_excludes: vec![],
         };
 
         let (tx, mut rx) = mpsc::channel::<Alert>(16);
@@ -479,6 +486,7 @@ mod tests {
             debounce_ms: 200,
             scan_content: false,
             max_file_size_kb: 1024,
+            content_scan_excludes: vec![],
         };
 
         let (tx, mut rx) = mpsc::channel::<Alert>(16);
@@ -548,6 +556,89 @@ mod tests {
         let config = SentinelConfig::default();
         let policy = policy_for_path(&config, "/home/openclaw/.openclaw/workspace/superpowers/skills/some_skill/README.md");
         assert!(policy.is_none());
+    }
+
+    #[test]
+    fn test_content_scan_exclude_glob_matches() {
+        let excludes = vec![
+            "**/.openclaw/**/auth-profiles.json".to_string(),
+            "**/.openclaw/credentials/**".to_string(),
+        ];
+
+        // auth-profiles.json should match
+        assert!(excludes.iter().any(|p| glob_match::glob_match(p,
+            "/home/openclaw/.openclaw/agents/main/agent/auth-profiles.json")));
+
+        // credentials subpath should match
+        assert!(excludes.iter().any(|p| glob_match::glob_match(p,
+            "/home/openclaw/.openclaw/credentials/whatsapp/creds.json")));
+
+        // unrelated path should NOT match
+        assert!(!excludes.iter().any(|p| glob_match::glob_match(p,
+            "/home/openclaw/.openclaw/workspace/SOUL.md")));
+
+        // different user's openclaw auth should also match
+        assert!(excludes.iter().any(|p| glob_match::glob_match(p,
+            "/home/otheruser/.openclaw/agents/main/agent/auth-profiles.json")));
+    }
+
+    #[tokio::test]
+    async fn test_handle_change_skips_content_scan_for_excluded_path() {
+        // Verify that a file matching content_scan_excludes is NOT quarantined
+        // even when it contains content that would trigger SecureClaw patterns.
+        let tmp = std::env::temp_dir().join("sentinel_test_exclude");
+        let _ = std::fs::remove_dir_all(&tmp);
+        let shadow_dir = tmp.join("shadow");
+        let quarantine_dir = tmp.join("quarantine");
+
+        // Simulate .openclaw/agents/main/agent/ structure
+        let auth_dir = tmp.join(".openclaw/agents/main/agent");
+        std::fs::create_dir_all(&auth_dir).unwrap();
+        let auth_path = auth_dir.join("auth-profiles.json");
+        let original = r#"{"profiles":[]}"#;
+        std::fs::write(&auth_path, original).unwrap();
+
+        let auth_path_str = auth_path.to_string_lossy().to_string();
+
+        let config = SentinelConfig {
+            enabled: true,
+            watch_paths: vec![WatchPathConfig {
+                path: auth_path_str.clone(),
+                patterns: vec!["*".to_string()],
+                policy: WatchPolicy::Protected,
+            }],
+            quarantine_dir: quarantine_dir.to_string_lossy().to_string(),
+            shadow_dir: shadow_dir.to_string_lossy().to_string(),
+            debounce_ms: 200,
+            scan_content: true,
+            max_file_size_kb: 1024,
+            content_scan_excludes: vec![
+                "**/.openclaw/**/auth-profiles.json".to_string(),
+            ],
+        };
+
+        let (tx, mut rx) = mpsc::channel::<Alert>(16);
+        let sentinel = Sentinel::new(config, tx, None).unwrap();
+
+        // Write content with an API key pattern — without exclusion this would
+        // be flagged by SecureClaw if an engine were present. The key point is
+        // that the exclusion path logic is exercised. Since there's no engine
+        // in this test, we verify the file is still treated as Protected
+        // (quarantine + restore) rather than threat-scanned.
+        std::fs::write(&auth_path, r#"{"profiles":[{"key":"sk-ant-fake"}]}"#).unwrap();
+        sentinel.handle_change(&auth_path_str).await;
+
+        // Protected file should be restored to original
+        let restored = std::fs::read_to_string(&auth_path).unwrap();
+        assert_eq!(restored, original);
+
+        let alert = rx.try_recv().unwrap();
+        assert_eq!(alert.severity, Severity::Critical);
+        // The message should say "Protected file" not "THREAT detected"
+        assert!(alert.message.contains("Protected file"),
+            "Should be protected-file restore, not threat detection: {}", alert.message);
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

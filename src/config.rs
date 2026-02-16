@@ -356,6 +356,15 @@ pub struct SentinelConfig {
     pub scan_content: bool,
     #[serde(default = "default_max_file_size_kb")]
     pub max_file_size_kb: u64,
+    /// Glob patterns for paths excluded from content scanning (e.g. credential
+    /// stores that legitimately contain API keys). Matched using `glob::Pattern`.
+    #[serde(default = "default_content_scan_excludes")]
+    pub content_scan_excludes: Vec<String>,
+    /// Substring patterns for paths excluded from content scanning.
+    /// If a file's path contains any of these strings, SecureClaw content
+    /// scanning is skipped (change detection still applies).
+    #[serde(default = "default_exclude_content_scan")]
+    pub exclude_content_scan: Vec<String>,
 }
 
 /// A single path to watch with its glob patterns and policy.
@@ -381,6 +390,27 @@ fn default_shadow_dir() -> String { "/etc/clawav/sentinel-shadow".to_string() }
 fn default_debounce_ms() -> u64 { 200 }
 fn default_scan_content() -> bool { true }
 fn default_max_file_size_kb() -> u64 { 1024 }
+
+/// Default paths excluded from content scanning. These are files that
+/// legitimately contain API keys or credentials and should not be flagged
+/// by SecureClaw pattern matching.
+fn default_content_scan_excludes() -> Vec<String> {
+    vec![
+        "**/.openclaw/**/auth-profiles.json".to_string(),
+        "**/.openclaw/credentials/**".to_string(),
+        "**/superpowers/skills/**".to_string(),
+    ]
+}
+
+/// Default paths excluded from content scanning via simple substring matching.
+/// This is a secondary exclusion mechanism — files whose path contains any of
+/// these substrings will skip SecureClaw content scanning even if they are
+/// Protected policy.
+fn default_exclude_content_scan() -> Vec<String> {
+    vec![
+        "superpowers/skills".to_string(),
+    ]
+}
 
 impl Default for SentinelConfig {
     fn default() -> Self {
@@ -467,6 +497,8 @@ impl Default for SentinelConfig {
             debounce_ms: default_debounce_ms(),
             scan_content: default_scan_content(),
             max_file_size_kb: default_max_file_size_kb(),
+            content_scan_excludes: default_content_scan_excludes(),
+            exclude_content_scan: default_exclude_content_scan(),
         }
     }
 }
@@ -574,6 +606,17 @@ mod tests {
             "Should watch OpenClaw config file");
         assert!(paths.iter().any(|p| p.contains("auth-profiles.json")),
             "Should watch auth profiles");
+    }
+
+    #[test]
+    fn test_default_sentinel_content_scan_excludes_openclaw_auth() {
+        let config = SentinelConfig::default();
+        assert!(!config.content_scan_excludes.is_empty(),
+            "Should have default content scan exclusions");
+        assert!(config.content_scan_excludes.iter().any(|p| p.contains("auth-profiles.json")),
+            "Should exclude OpenClaw auth-profiles.json from content scanning");
+        assert!(config.content_scan_excludes.iter().any(|p| p.contains(".openclaw/credentials")),
+            "Should exclude OpenClaw credentials dir from content scanning");
     }
 
     #[test]
