@@ -259,9 +259,56 @@ impl App {
             self.config_saved_message = None;
         }
 
+        // Search mode input
+        if self.search_active {
+            match key {
+                KeyCode::Enter => {
+                    self.search_filter = self.search_buffer.clone();
+                    self.search_active = false;
+                }
+                KeyCode::Esc => {
+                    self.search_active = false;
+                    self.search_buffer.clear();
+                }
+                KeyCode::Backspace => { self.search_buffer.pop(); }
+                KeyCode::Char(c) => { self.search_buffer.push(c); }
+                _ => {}
+            }
+            return;
+        }
+
+        // Detail view mode
+        if self.detail_alert.is_some() {
+            match key {
+                KeyCode::Esc | KeyCode::Backspace | KeyCode::Char('q') => {
+                    self.detail_alert = None;
+                }
+                KeyCode::Char('m') => {
+                    // Mute/unmute the source of the viewed alert
+                    if let Some(ref alert) = self.detail_alert {
+                        let src = alert.source.clone();
+                        if let Some(pos) = self.muted_sources.iter().position(|s| s == &src) {
+                            self.muted_sources.remove(pos);
+                        } else {
+                            self.muted_sources.push(src);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
         match key {
-            KeyCode::Char('q') | KeyCode::Esc if !self.config_editing => self.should_quit = true,
-            // Config tab: Left/Right navigate sections, only Tab/BackTab switch tabs
+            KeyCode::Char('q') | KeyCode::Esc if !self.config_editing => {
+                // If search filter is active, Esc clears it first
+                if !self.search_filter.is_empty() && key == KeyCode::Esc {
+                    self.search_filter.clear();
+                    self.search_buffer.clear();
+                } else {
+                    self.should_quit = true;
+                }
+            }
             KeyCode::Tab if !self.config_editing => {
                 self.selected_tab = (self.selected_tab + 1) % self.tab_titles.len();
             }
@@ -284,7 +331,54 @@ impl App {
                 }
                 if self.selected_tab == 5 { self.config_focus = ConfigFocus::Sidebar; }
             }
-            // Config tab specific keys (including Left/Right for section nav)
+            // Alert list tabs (0-3): scroll, select, search, pause
+            KeyCode::Up if self.selected_tab <= 3 => {
+                let state = &mut self.list_states[self.selected_tab];
+                let i = state.selected().unwrap_or(0);
+                state.select(Some(i.saturating_sub(1)));
+            }
+            KeyCode::Down if self.selected_tab <= 3 => {
+                let state = &mut self.list_states[self.selected_tab];
+                let i = state.selected().unwrap_or(0);
+                state.select(Some(i + 1)); // ListState clamps to list len during render
+            }
+            KeyCode::Enter if self.selected_tab <= 3 => {
+                // Open detail view for selected alert
+                let tab = self.selected_tab;
+                let selected_idx = self.list_states[tab].selected().unwrap_or(0);
+                let source_filter: Option<&str> = match tab {
+                    1 => Some("network"),
+                    2 => Some("falco"),
+                    3 => Some("samhain"),
+                    _ => None,
+                };
+                let filtered: Vec<&Alert> = self.alert_store.alerts()
+                    .iter()
+                    .rev()
+                    .filter(|a| {
+                        if let Some(src) = source_filter {
+                            if a.source != src { return false; }
+                        }
+                        if self.muted_sources.contains(&a.source) { return false; }
+                        if !self.search_filter.is_empty() {
+                            let h = a.to_string().to_lowercase();
+                            if !h.contains(&self.search_filter.to_lowercase()) { return false; }
+                        }
+                        true
+                    })
+                    .collect();
+                if let Some(alert) = filtered.get(selected_idx) {
+                    self.detail_alert = Some((*alert).clone());
+                }
+            }
+            KeyCode::Char('/') if self.selected_tab <= 3 => {
+                self.search_active = true;
+                self.search_buffer = self.search_filter.clone();
+            }
+            KeyCode::Char(' ') if self.selected_tab <= 3 => {
+                self.paused = !self.paused;
+            }
+            // Config tab specific keys
             _ if self.selected_tab == 5 => self.handle_config_key(key, modifiers),
             _ => {}
         }
@@ -1191,9 +1285,11 @@ pub async fn run_tui(mut alert_rx: mpsc::Receiver<Alert>, config_path: Option<Pa
             }
         }
 
-        // Drain alert channel
-        while let Ok(alert) = alert_rx.try_recv() {
-            app.alert_store.push(alert);
+        // Drain alert channel (skip when paused — alerts buffer in channel)
+        if !app.paused {
+            while let Ok(alert) = alert_rx.try_recv() {
+                app.alert_store.push(alert);
+            }
         }
 
         if app.should_quit {
