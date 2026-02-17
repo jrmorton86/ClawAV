@@ -1,6 +1,6 @@
 [package]
 name = "clawtower"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 description = "Tamper-proof security watchdog for AI agents"
 license = "MIT"

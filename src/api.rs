@@ -139,7 +139,26 @@ async fn handle(
     req: Request<Body>,
     store: SharedAlertStore,
     start_time: Instant,
+    auth_token: Arc<String>,
 ) -> Result<Response<Body>, Infallible> {
+    // Check bearer token auth if configured
+    if !auth_token.is_empty() {
+        let authorized = req.headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.strip_prefix("Bearer ").unwrap_or("") == auth_token.as_str())
+            .unwrap_or(false);
+
+        if !authorized && req.uri().path() != "/api/health" {
+            return Ok(Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .header("WWW-Authenticate", "Bearer")
+                .header("Content-Type", "application/json")
+                .body(Body::from(r#"{"error":"unauthorized"}"#))
+                .unwrap());
+        }
+    }
+
     let resp = match req.uri().path() {
         "/" => {
             let html = r#"<!DOCTYPE html><html><head><title>ClawTower</title></head><body>
@@ -223,15 +242,17 @@ async fn handle(
 /// Start the HTTP API server on the given bind address and port.
 ///
 /// Runs indefinitely, serving requests against the shared alert store.
-pub async fn run_api_server(bind: &str, port: u16, store: SharedAlertStore) -> anyhow::Result<()> {
+pub async fn run_api_server(bind: &str, port: u16, store: SharedAlertStore, auth_token: String) -> anyhow::Result<()> {
     let addr: SocketAddr = format!("{}:{}", bind, port).parse()?;
     let start_time = Instant::now();
+    let auth_token = Arc::new(auth_token);
 
     let make_svc = make_service_fn(move |_conn| {
         let store = store.clone();
+        let auth_token = auth_token.clone();
         async move {
             Ok::<_, Infallible>(service_fn(move |req| {
-                handle(req, store.clone(), start_time)
+                handle(req, store.clone(), start_time, auth_token.clone())
             }))
         }
     });
@@ -274,6 +295,13 @@ mod tests {
         assert_eq!(parsed["source"], "auditd");
         assert_eq!(parsed["message"], "privilege escalation detected");
         assert!(parsed["ts"].as_str().is_some());
+    }
+
+    #[test]
+    fn test_api_default_bind_localhost() {
+        let config = crate::config::ApiConfig::default();
+        assert_eq!(config.bind, "127.0.0.1", "API should default to localhost only");
+        assert!(config.auth_token.is_empty(), "Auth token should default to empty");
     }
 
     #[test]

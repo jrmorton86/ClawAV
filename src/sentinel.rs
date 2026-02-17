@@ -190,6 +190,22 @@ impl Sentinel {
                 return true;
             }
         }
+        // npm lifecycle hooks (package.json with postinstall/preinstall scripts)
+        if fname == "package.json" {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                if content.contains("postinstall") || content.contains("preinstall") || content.contains("prepare") {
+                    return true;
+                }
+            }
+        }
+        // Python sitecustomize persistence
+        if fname == "sitecustomize.py" || fname == "usercustomize.py" {
+            return true;
+        }
+        // crontab spool and at queue files
+        if path.contains("/var/spool/cron/") || path.contains("/var/spool/at/") {
+            return true;
+        }
         false
     }
 
@@ -726,6 +742,26 @@ mod tests {
     fn test_is_persistence_critical_normal_file() {
         assert!(!Sentinel::is_persistence_critical("/home/openclaw/.bashrc"));
         assert!(!Sentinel::is_persistence_critical("/home/openclaw/.openclaw/workspace/SOUL.md"));
+    }
+
+    #[test]
+    fn test_is_persistence_critical_crontab_spool() {
+        assert!(Sentinel::is_persistence_critical("/var/spool/cron/crontabs/openclaw"));
+    }
+
+    #[test]
+    fn test_is_persistence_critical_at_spool() {
+        assert!(Sentinel::is_persistence_critical("/var/spool/at/a00001019abc12"));
+    }
+
+    #[test]
+    fn test_is_persistence_critical_sitecustomize() {
+        assert!(Sentinel::is_persistence_critical("/usr/lib/python3/sitecustomize.py"));
+    }
+
+    #[test]
+    fn test_is_persistence_critical_usercustomize() {
+        assert!(Sentinel::is_persistence_critical("/home/openclaw/.local/lib/python3.11/usercustomize.py"));
     }
 
     #[test]

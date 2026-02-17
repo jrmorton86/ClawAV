@@ -34,6 +34,8 @@ pub const RECOMMENDED_AUDIT_RULES: &[&str] = &[
     "-w /home/openclaw/.ssh/id_ed25519 -p r -k clawtower_cred_read",
     "-w /home/openclaw/.ssh/id_rsa -p r -k clawtower_cred_read",
     "-w /home/openclaw/.openclaw/gateway.yaml -p r -k clawtower_cred_read",
+    // Network connect() monitoring for watched user (T6.1 — outbound escape detection)
+    "-a always,exit -F arch=b64 -S connect -F uid=1000 -F success=1 -k clawtower_net_connect",
 ];
 
 use crate::alerts::{Alert, Severity};
@@ -356,7 +358,7 @@ pub fn check_tamper_event(event: &ParsedEvent) -> Option<Alert> {
             .unwrap_or(&line[..line.len().min(200)]);
         let exe = extract_field(line, "exe").unwrap_or("unknown");
         // Allowlist: OpenClaw itself legitimately reads auth-profiles.json and gateway.yaml
-        let is_openclaw = exe.contains("openclaw") || exe.contains("node");
+        let is_openclaw = exe.contains("openclaw") || exe.contains("/usr/bin/node") || exe.contains("/usr/local/bin/node");
         if !is_openclaw {
             return Some(Alert::new(
                 Severity::Critical,
@@ -368,6 +370,20 @@ pub fn check_tamper_event(event: &ParsedEvent) -> Option<Alert> {
                 Severity::Info,
                 "auditd:cred_read",
                 &format!("🔑 Credential access (expected): {} by {}", detail, exe),
+            ));
+        }
+    }
+
+    // Network connect() detection via auditd (T6.1)
+    if line.contains("key=\"clawtower_net_connect\"") || line.contains("key=clawtower_net_connect") {
+        let exe = extract_field(line, "exe").unwrap_or("unknown");
+        // Skip localhost connections and known-safe processes
+        let is_safe = exe.contains("clawtower") || exe.contains("systemd") || exe.contains("dbus");
+        if !is_safe {
+            return Some(Alert::new(
+                Severity::Warning,
+                "auditd:net_connect",
+                &format!("🌐 Outbound connect() by {}", exe),
             ));
         }
     }
@@ -460,13 +476,31 @@ pub async fn tail_audit_log_with_behavior(
     tail_audit_log_with_behavior_and_policy(path, watched_users, tx, None, None).await
 }
 
-/// Tail audit log with behavior detection + optional policy engine
+/// Tail audit log with behavior detection + optional policy engine (legacy wrapper)
+#[allow(dead_code)]
 pub async fn tail_audit_log_with_behavior_and_policy(
     path: &Path,
     watched_users: Option<Vec<String>>,
     tx: mpsc::Sender<Alert>,
     policy_engine: Option<crate::policy::PolicyEngine>,
     secureclaw_engine: Option<Arc<crate::secureclaw::SecureClawEngine>>,
+) -> Result<()> {
+    tail_audit_log_full(path, watched_users, tx, policy_engine, secureclaw_engine, None).await
+}
+
+/// Tail audit log with full detection: behavior, policy, SecureClaw, and network policy.
+///
+/// When `netpolicy` is provided, connect() syscalls are correlated with their
+/// SOCKADDR records to extract destination IP:port. Destinations are evaluated
+/// against the netpolicy allowlist/blocklist. Loopback and private LAN addresses
+/// are automatically filtered out.
+pub async fn tail_audit_log_full(
+    path: &Path,
+    watched_users: Option<Vec<String>>,
+    tx: mpsc::Sender<Alert>,
+    policy_engine: Option<crate::policy::PolicyEngine>,
+    secureclaw_engine: Option<Arc<crate::secureclaw::SecureClawEngine>>,
+    netpolicy: Option<crate::netpolicy::NetPolicy>,
 ) -> Result<()> {
     use std::io::{Seek, SeekFrom};
     use tokio::time::{sleep, Duration};
@@ -1162,5 +1196,23 @@ mod tests {
         let alert = check_tamper_event(&event);
         // curl is NOT in NET_SUSPICIOUS_EXES (already handled by behavior engine)
         assert!(alert.is_none(), "curl connect() should not double-flag");
+    }
+
+    #[test]
+    fn test_connect_audit_key_detected() {
+        let line = r#"type=SYSCALL msg=audit(1234567890.123:456): arch=c00000b7 syscall=203 success=yes exit=0 a0=3 a1=7fff123 a2=10 a3=0 items=0 ppid=1234 pid=5678 auid=1000 uid=1000 gid=1000 euid=1000 suid=1000 fsuid=1000 egid=1000 sgid=1000 fsgid=1000 tty=(none) ses=1 comm="curl" exe="/usr/bin/curl" key="clawtower_net_connect""#;
+        let event = parse_to_event(line, None).unwrap();
+        let alert = check_tamper_event(&event);
+        assert!(alert.is_some(), "connect() with clawtower_net_connect key should trigger alert");
+        let alert = alert.unwrap();
+        assert!(alert.source.contains("net_connect"));
+    }
+
+    #[test]
+    fn test_connect_audit_key_safe_process_ignored() {
+        let line = r#"type=SYSCALL msg=audit(1234567890.123:456): arch=c00000b7 syscall=203 success=yes exit=0 a0=3 a1=7fff123 a2=10 a3=0 items=0 ppid=1234 pid=5678 auid=1000 uid=1000 gid=1000 euid=1000 suid=1000 fsuid=1000 egid=1000 sgid=1000 fsgid=1000 tty=(none) ses=1 comm="systemd" exe="/lib/systemd/systemd" key="clawtower_net_connect""#;
+        let event = parse_to_event(line, None).unwrap();
+        let alert = check_tamper_event(&event);
+        assert!(alert.is_none(), "systemd connect() should be ignored");
     }
 }

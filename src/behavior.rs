@@ -182,6 +182,10 @@ const PERSISTENCE_WRITE_PATHS: &[&str] = &[
     "/usr/lib/systemd/system/",
     "/etc/profile.d/",
     "/etc/ld.so.preload",
+    "sitecustomize.py",
+    "usercustomize.py",
+    ".git/hooks/",
+    "node_modules/.hooks/",
 ];
 
 /// Patterns that indicate LD_PRELOAD bypass attempts
@@ -439,7 +443,11 @@ pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Sever
 
         // systemd timer/service creation
         if binary == "systemctl" && args.iter().any(|a| a == "enable" || a == "start") {
-            // Enabling/starting arbitrary services could be persistence
+            // User-level persistence via systemctl --user is especially suspicious
+            if args.iter().any(|a| a == "--user") {
+                return Some((BehaviorCategory::SecurityTamper, Severity::Critical));
+            }
+            // System-level enable/start is still suspicious but lower severity
             return Some((BehaviorCategory::SecurityTamper, Severity::Warning));
         }
 
@@ -782,11 +790,30 @@ pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Sever
         }
 
         // --- CRITICAL: Reading sensitive files ---
-        if ["cat", "less", "more", "head", "tail", "xxd", "base64", "cp", "scp"].contains(&binary) {
+        if ["cat", "less", "more", "head", "tail", "xxd", "base64", "cp", "scp", "dd", "tar", "rsync", "sed", "tee"].contains(&binary) {
             for arg in args.iter().skip(1) {
                 for path in CRITICAL_READ_PATHS {
                     if arg.contains(path) {
                         return Some((BehaviorCategory::PrivilegeEscalation, Severity::Critical));
+                    }
+                }
+            }
+        }
+
+        // dd special handling — uses if=<path> syntax
+        if binary == "dd" {
+            for arg in args.iter() {
+                if arg.starts_with("if=") {
+                    let path = &arg[3..];
+                    for crit_path in CRITICAL_READ_PATHS {
+                        if path.contains(crit_path) {
+                            return Some((BehaviorCategory::PrivilegeEscalation, Severity::Critical));
+                        }
+                    }
+                    for recon_path in RECON_PATHS {
+                        if path.contains(recon_path) {
+                            return Some((BehaviorCategory::Reconnaissance, Severity::Warning));
+                        }
                     }
                 }
             }
@@ -826,7 +853,7 @@ pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Sever
         }
 
         // --- WARNING: Reading recon-sensitive files ---
-        if ["cat", "less", "more", "head", "tail", "cp"].contains(&binary) {
+        if ["cat", "less", "more", "head", "tail", "cp", "dd", "tar", "rsync", "sed", "tee", "scp"].contains(&binary) {
             for arg in args.iter().skip(1) {
                 for path in RECON_PATHS {
                     if arg.contains(path) {
@@ -2246,6 +2273,20 @@ mod tests {
         assert_eq!(result, Some((BehaviorCategory::SecurityTamper, Severity::Critical)));
     }
 
+    #[test]
+    fn test_systemctl_user_enable_is_critical() {
+        let event = make_exec_event(&["systemctl", "--user", "enable", "evil.timer"]);
+        let result = classify_behavior(&event);
+        assert_eq!(result, Some((BehaviorCategory::SecurityTamper, Severity::Critical)));
+    }
+
+    #[test]
+    fn test_systemctl_system_enable_is_warning() {
+        let event = make_exec_event(&["systemctl", "enable", "some.service"]);
+        let result = classify_behavior(&event);
+        assert_eq!(result, Some((BehaviorCategory::SecurityTamper, Severity::Warning)));
+    }
+
     // --- False positive checks ---
 
     #[test]
@@ -2557,6 +2598,49 @@ mod tests {
         let event = make_exec_event(&["git", "status"]);
         let result = classify_behavior(&event);
         assert_eq!(result, None, "git status should not be flagged");
+    }
+
+    #[test]
+    fn test_dd_reading_sensitive_file() {
+        let event = make_exec_event(&["dd", "if=/etc/shadow", "of=/tmp/shadow"]);
+        let result = classify_behavior(&event);
+        assert!(result.is_some(), "dd reading /etc/shadow should be detected");
+        assert_eq!(result.unwrap().1, Severity::Critical);
+    }
+
+    #[test]
+    fn test_tar_reading_sensitive_file() {
+        let event = make_exec_event(&["tar", "cf", "/tmp/out.tar", "/home/user/.ssh/id_rsa"]);
+        let result = classify_behavior(&event);
+        assert!(result.is_some(), "tar on .ssh/id_rsa should be detected");
+    }
+
+    #[test]
+    fn test_rsync_sensitive_file() {
+        let event = make_exec_event(&["rsync", "/home/user/.aws/credentials", "/tmp/creds"]);
+        let result = classify_behavior(&event);
+        assert!(result.is_some(), "rsync on .aws/credentials should be detected");
+    }
+
+    #[test]
+    fn test_sed_reading_sensitive_file() {
+        let event = make_exec_event(&["sed", "n", "/etc/shadow"]);
+        let result = classify_behavior(&event);
+        assert!(result.is_some(), "sed on /etc/shadow should be detected");
+    }
+
+    #[test]
+    fn test_dd_recon_file() {
+        let event = make_exec_event(&["dd", "if=/home/user/.aws/credentials", "of=/tmp/creds"]);
+        let result = classify_behavior(&event);
+        assert!(result.is_some(), "dd reading .aws/credentials should be detected");
+    }
+
+    #[test]
+    fn test_sitecustomize_write_persistence() {
+        let event = make_syscall_event("openat", "/usr/lib/python3/sitecustomize.py");
+        let result = classify_behavior(&event);
+        assert!(result.is_some(), "Writing sitecustomize.py should be detected as persistence");
     }
 }
 

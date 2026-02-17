@@ -426,17 +426,26 @@ async fn async_main() -> Result<()> {
         None
     };
 
-    // Spawn auditd tail with behavior detection
+    // Spawn auditd tail with behavior detection + network policy
     if config.auditd.enabled {
         let tx = raw_tx.clone();
         let path = PathBuf::from(&config.auditd.log_path);
         let watched = config.general.effective_watched_users();
         let pe = policy_engine.clone();
         let se = secureclaw_engine.clone();
+        let np = if config.netpolicy.enabled {
+            eprintln!("Network policy enabled (mode: {}, {} allowed hosts, {} blocked hosts)",
+                config.netpolicy.mode,
+                config.netpolicy.allowed_hosts.len(),
+                config.netpolicy.blocked_hosts.len());
+            Some(netpolicy::NetPolicy::from_config(&config.netpolicy))
+        } else {
+            None
+        };
         // Check read access before spawning
         if std::fs::metadata(&path).is_ok() {
             tokio::spawn(async move {
-                if let Err(e) = auditd::tail_audit_log_with_behavior_and_policy(&path, watched, tx, pe, se).await {
+                if let Err(e) = auditd::tail_audit_log_full(&path, watched, tx, pe, se, np).await {
                     eprintln!("auditd monitor error: {}", e);
                 }
             });
@@ -559,8 +568,9 @@ async fn async_main() -> Result<()> {
         let store = alert_store.clone();
         let bind = config.api.bind.clone();
         let port = config.api.port;
+        let auth_token = config.api.auth_token.clone();
         tokio::spawn(async move {
-            if let Err(e) = api::run_api_server(&bind, port, store).await {
+            if let Err(e) = api::run_api_server(&bind, port, store, auth_token).await {
                 eprintln!("API server error: {}", e);
             }
         });
@@ -632,6 +642,15 @@ async fn async_main() -> Result<()> {
         let oc_cfg = config.openclaw.clone();
         tokio::spawn(async move {
             scanner::run_periodic_scans(interval, tx, scan_store, oc_cfg).await;
+        });
+    }
+
+    // Spawn fast-cycle persistence scanner (default 300s)
+    {
+        let tx = raw_tx.clone();
+        let persist_interval = config.scans.persistence_interval;
+        tokio::spawn(async move {
+            scanner::run_persistence_scans(persist_interval, tx).await;
         });
     }
 
