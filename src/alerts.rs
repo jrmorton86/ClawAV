@@ -124,4 +124,9 @@ impl AlertStore {
     pub fn count_by_severity(&self, severity: &Severity) -> usize {
         self.alerts.iter().filter(|a| &a.severity == severity).count()
     }
+
+    /// Count alerts matching a given source string.
+    pub fn count_by_source(&self, source: &str) -> usize {
+        self.alerts.iter().filter(|a| a.source == source).count()
+    }
 }
