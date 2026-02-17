@@ -154,3 +154,17 @@ Scoring to be completed during POC phase (Red Lobster v5b).
 2. Red Lobster v5b: Build POCs for highest-priority vectors
 3. Red Lobster v5c: Harden based on findings
 4. Consider: automated red team harness that runs all POCs against any ClawTower install
+
+## Implementation
+
+Pentest scripts implemented as:
+- `scripts/redlobster-lib.sh` — shared helper library
+- `scripts/redlobster-v5-flag7-runtime.sh` + `*-python.py` + `*-node.js` — runtime abuse
+- `scripts/redlobster-v5-flag8-privchain.sh` — privilege chains
+- `scripts/redlobster-v5-flag9-stealth.sh` — stealth evasion
+- `scripts/redlobster-v5-flag10-blind.sh` — blinding attacks
+- `scripts/redlobster-v5-flag11-custom.sh` + `*-rawread.c` + `*-memfd.c` — custom tooling
+- `scripts/redlobster-v5-flag12-cognitive.sh` — cognitive manipulation
+- `scripts/redlobster-v5-run-all.sh` — unified runner
+
+Run: `sudo bash scripts/redlobster-v5-run-all.sh`
