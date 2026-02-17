@@ -546,7 +546,34 @@ pub async fn tail_audit_log_full(
     let _ = reader.read_line(&mut discard);
     let mut line = String::new();
 
+
+    // Periodic auditd rule reload to fix inode staleness.
+    // File watches (-w) use inodes; when files are replaced/rewritten,
+    // the inode changes and the watch goes stale. Reloading every 5 min
+    // refreshes all watches to current inodes.
+    let mut last_rule_reload = std::time::Instant::now();
+    const RULE_RELOAD_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
     loop {
+        // Check if auditd rules need reloading (fixes inode staleness)
+        if last_rule_reload.elapsed() >= RULE_RELOAD_INTERVAL {
+            match std::process::Command::new("auditctl")
+                .args(["-R", "/etc/audit/rules.d/clawtower.rules"])
+                .output()
+            {
+                Ok(output) if output.status.success() => {
+                    tracing::debug!("Periodic auditd rule reload succeeded");
+                }
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    tracing::warn!("Periodic auditd rule reload failed: {}", stderr);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to run auditctl for rule reload: {}", e);
+                }
+            }
+            last_rule_reload = std::time::Instant::now();
+        }
+
         line.clear();
         match reader.read_line(&mut line) {
             Ok(0) => {
