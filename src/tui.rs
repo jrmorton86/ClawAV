@@ -192,6 +192,7 @@ impl App {
                 "general".into(), "slack".into(), "auditd".into(), "network".into(), 
                 "falco".into(), "samhain".into(), "api".into(), "scans".into(), 
                 "proxy".into(), "policy".into(), "secureclaw".into(), "netpolicy".into(),
+                "response".into(),
             ],
             config_selected_section: 0,
             config_fields: Vec::new(),
@@ -1004,6 +1005,38 @@ fn get_section_fields(config: &Config, section: &str, tool_cache: &HashMap<Strin
                 field_type: FieldType::Text,
             },
         ],
+        "response" => vec![
+            ConfigField {
+                name: "enabled".to_string(),
+                value: config.response.enabled.to_string(),
+                section: section.to_string(),
+                field_type: FieldType::Enum(vec!["true".into(), "false".into()]),
+            },
+            ConfigField {
+                name: "timeout_secs".to_string(),
+                value: config.response.timeout_secs.to_string(),
+                section: section.to_string(),
+                field_type: FieldType::Number,
+            },
+            ConfigField {
+                name: "warning_mode".to_string(),
+                value: config.response.warning_mode.clone(),
+                section: section.to_string(),
+                field_type: FieldType::Enum(vec!["gate".into(), "alert_only".into(), "auto_deny".into()]),
+            },
+            ConfigField {
+                name: "playbook_dir".to_string(),
+                value: config.response.playbook_dir.clone(),
+                section: section.to_string(),
+                field_type: FieldType::Text,
+            },
+            ConfigField {
+                name: "deny_message".to_string(),
+                value: config.response.deny_message.clone(),
+                section: section.to_string(),
+                field_type: FieldType::Text,
+            },
+        ],
         _ => Vec::new(),
     }
 }
@@ -1082,6 +1115,14 @@ fn apply_field_to_config(config: &mut Config, section: &str, field_name: &str, v
                     .filter_map(|s| s.trim().parse::<u16>().ok())
                     .collect();
             },
+            _ => {}
+        },
+        "response" => match field_name {
+            "enabled" => config.response.enabled = value == "true",
+            "timeout_secs" => if let Ok(t) = value.parse::<u64>() { config.response.timeout_secs = t; },
+            "warning_mode" => config.response.warning_mode = value.to_string(),
+            "playbook_dir" => config.response.playbook_dir = value.to_string(),
+            "deny_message" => config.response.deny_message = value.to_string(),
             _ => {}
         },
         _ => {}
@@ -1421,8 +1462,22 @@ fn ui(f: &mut Frame, app: &mut App) {
     let falco_count = alerts.iter().filter(|a| a.source == "falco").count();
     let fim_count = alerts.iter().filter(|a| a.source == "samhain").count();
 
+    let pending_count = {
+        if let Ok(pending) = app.pending_actions.try_lock() {
+            pending.iter().filter(|a| matches!(a.status, PendingStatus::AwaitingApproval)).count()
+        } else {
+            0
+        }
+    };
+
+    let alerts_title = if pending_count > 0 {
+        format!("Alerts ({}) 🔴{}", total, pending_count)
+    } else {
+        format!("Alerts ({})", total)
+    };
+
     let tab_titles: Vec<Line> = vec![
-        Line::from(format!("Alerts ({})", total)),
+        Line::from(alerts_title),
         Line::from(format!("Network ({})", net_count)),
         Line::from(format!("Falco ({})", falco_count)),
         Line::from(format!("FIM ({})", fim_count)),
