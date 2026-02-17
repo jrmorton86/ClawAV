@@ -198,3 +198,23 @@ Reading config files is not writing. The rule name says "write" but triggers on 
 6. **P2 — Allowlist compiler toolchain** in SEC_TAMPER: `gcc`, `collect2`, `ld`
 7. **P2 — Disable or install Falco/Samhain** (2,608 Info alerts wasted)
 8. **P3 — Investigate 52 service restarts** in 18h
+
+---
+
+## v0.3.3 Noise Fixes (Post-Analysis)
+
+### Sentinel Noise Fix (`fix/sentinel-noise` branch)
+
+The P0 sentinel skills loop (2,748 Critical alerts) is addressed on the `fix/sentinel-noise` branch with two changes:
+
+1. **Debounce restore** — Sentinel's quarantine→restore→re-detect loop is broken by restoring the debounce window after shadow copy restoration, preventing the immediate re-trigger cycle.
+2. **Content scan exclusions** — The `exclude_content_scan` config field allows substring-based path exclusions for SecureClaw content scanning. Skills directories and workspace markdown files can be excluded from content scanning while still receiving file-change alerts.
+
+**Estimated impact:** 2,748 Critical sentinel alerts → **~40** (98.5% reduction). The remaining ~40 are legitimate content scan hits on non-excluded paths.
+
+### Planned Scanner Deduplication
+
+Scanner results that persist across cycles (immutable flags missing, apparmor not loaded, etc.) generate repeat alerts every scan interval. Planned fix:
+
+- **24-hour scan dedup** — Same category + same status results suppressed for 24 hours after first alert.
+- **Estimated impact:** 45 persistent scanner warnings per 18h → **~4/day** (one per unique finding per day).

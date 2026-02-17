@@ -75,6 +75,16 @@ ClawTower installs auditd watch rules with special keys:
 - **`clawtower-tamper`** — Fires on `chattr` execution (immutable flag removal attempts). Severity: Critical.
 - **`clawtower-config`** — Fires on writes/attribute changes to protected ClawTower files. Severity: Critical.
 
+### `connect()` Syscall Monitoring *(v0.3.3+)*
+
+In addition to EXECVE-based command monitoring, ClawTower now monitors `connect()` syscalls (aarch64 syscall 203) via auditd rules for watched users. This catches outbound network connections at the syscall level, including:
+
+- Direct socket connections that bypass shell-level detection (e.g., `python socket.connect()`)
+- Connections made by compiled binaries without shell command lines
+- Network activity from processes that don't appear in EXECVE records
+
+The `connect()` events are parsed as SYSCALL records with destination address extracted from the audit fields, then fed through behavior classification for exfiltration detection. This complements iptables log monitoring by providing attribution (which user/process initiated the connection).
+
 ### Main Entry Point
 
 `tail_audit_log_with_behavior_and_policy()` is the primary function (see also [ALERT-PIPELINE.md](ALERT-PIPELINE.md#alert-sources) for how alerts flow downstream). It:

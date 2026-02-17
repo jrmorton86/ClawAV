@@ -525,6 +525,34 @@ Checks audit log file existence, permissions, and health at `/var/log/audit/audi
 
 ---
 
+### Persistence Detection
+
+#### `scan_persistence()` *(v0.3.3+)*
+**Category:** `persistence`
+
+Scans for common persistence mechanisms that an AI agent or attacker might install. Runs at the standard scan interval (default: 300s).
+
+| Check | What it looks for |
+|-------|------------------|
+| **Crontab entries** | Suspicious commands in user/system crontabs (curl, wget, nc, python -c, base64, /dev/tcp) |
+| **Systemd user units** | `.service` and `.timer` files in `~/.config/systemd/user/` |
+| **Autostart entries** | `.desktop` files in `~/.config/autostart/` |
+| **Git hooks** | Non-`.sample` files in `.git/hooks/` directories |
+| **Global npm packages** | Recently installed global npm packages (`npm install -g`) |
+| **At jobs** | Scheduled `at` jobs for the watched user |
+
+| Status | Condition |
+|--------|-----------|
+| Pass | No persistence mechanisms detected |
+| Warn | Benign but notable persistence (e.g., legitimate user systemd units) |
+| Fail | Suspicious persistence mechanisms found |
+
+**Remediation:** Investigate and remove unauthorized persistence. Check `crontab -l`, `systemctl --user list-units`, `atq`, and `ls ~/.config/autostart/`.
+
+> **Note:** The sentinel module also provides real-time persistence detection via `is_persistence_critical()` for file-level changes. This scanner provides periodic sweep coverage for mechanisms that may not trigger inotify events.
+
+---
+
 ### OpenClaw-Specific
 
 #### `scan_openclaw_security()`

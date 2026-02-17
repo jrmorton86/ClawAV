@@ -223,6 +223,11 @@ Hardcoded behavioral threat detection with 5 categories:
 
 Has allowlists for safe hosts, normal system operations (`ip neigh`, `crontab -l`), and build tool suppression (cargo/gcc child processes don't trigger LD_PRELOAD bypass alerts).
 
+**v0.3.3 additions:**
+- **Persistence expansion:** `npm install -g`, `python -m pip install`, `crontab` (enhanced), `at` command scheduling
+- **Exfiltration expansion:** 9→15 binaries (added `dd`, `rsync`, `scp`, `sftp`, `openssl s_client`, `ncat`), `dd` syntax patterns, tightened Node.js allowlist
+- **`connect()` syscall monitoring:** auditd rules for syscall 203 (aarch64) on watched users, catching outbound connections at kernel level
+
 LD_PRELOAD env var detection added to `classify_behavior()` — checks raw audit record for `LD_PRELOAD=` before command parsing. Suppresses for ClawTower's own guard, build tool binaries/parents.
 
 ### `cognitive.rs`
@@ -984,6 +989,24 @@ To add defaults at compile time, modify `SentinelConfig::default()` in `src/conf
 2. Create `render_my_tab()` function
 3. Add match arm in `ui()` function
 4. Filter alerts by source for the tab content
+
+---
+
+## v0.3.3 Hardening Notes (Red Lobster v4)
+
+Key lessons and gotchas from the Red Lobster v4 adversarial testing:
+
+### iptables Log Prefix Gotcha
+The `[network] log_prefix` in `config.toml` **must exactly match** the `--log-prefix` string in the iptables rules installed by `setup-iptables.sh`. A mismatch (e.g., `"CLAWTOWER_NET"` vs `"CLAWTOWER_NET: "` with trailing space/colon) silently drops all network alerts. Always verify both sides match.
+
+### Sensitive File Allowlist
+The behavior engine's `SAFE_HOSTS` list and sentinel's `exclude_content_scan` must be kept tight. Overly broad allowlists (e.g., allowing all `*.npmjs.org` subdomains) create exfiltration blind spots. The v0.3.3 Node.js allowlist was tightened for this reason.
+
+### API Auth Flags
+The `[api]` section now respects authentication requirements for sensitive endpoints (`/api/alerts`, `/api/security`). Previously these were unauthenticated when `api.enabled = true`. Ensure API consumers pass the admin key header after upgrading.
+
+### Persistence Detection Expansion
+Persistence detection now covers `npm install -g`, `python -m pip install`, `crontab` (beyond `-l`), and `at` scheduling. The sentinel module's `is_persistence_critical()` also watches for `.service`/`.timer` in systemd user dirs, `.desktop` in autostart, and non-sample git hooks.
 
 ---
 

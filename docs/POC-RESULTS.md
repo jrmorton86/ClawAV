@@ -111,3 +111,30 @@
 4. **The LD_PRELOAD gap is addressable.** Add a behavior pattern matching `LD_PRELOAD=` in process command lines, or an auditd watch on environment variable manipulation. Low effort fix.
 
 5. **Minor cosmetic bug.** TEST 7's `/etc/passwd` read triggered `deny-sensitive-write` instead of a read-specific policy. Detection worked, label is wrong.
+
+> **Note:** The results above reflect testing against **ClawTower v0.3.1**.
+
+---
+
+## v0.3.3 Hardening Summary
+
+Red Lobster v4 adversarial testing identified several detection gaps. The following fixes were implemented in v0.3.3:
+
+### ESCAPE — Network Evasion Fixes
+- **iptables log prefix mismatch fix** — The network monitor's `log_prefix` config was not matching the actual iptables rule prefix, causing missed network alerts. Prefix now correctly aligns between `setup-iptables.sh` and `config.toml`.
+- **auditd `connect()` syscall monitoring** — Added auditd rules to monitor `connect()` (syscall 203 on aarch64) for the watched user, catching outbound connection attempts that bypass iptables logging (e.g., direct socket connections).
+
+### EXFIL — Data Exfiltration Coverage Expansion
+- **Binary coverage expanded from 9 → 15** — Added `dd`, `rsync`, `scp`, `sftp`, `openssl s_client`, and `ncat` to exfiltration detection patterns.
+- **`dd` syntax detection** — Added pattern matching for `dd if=/path of=/dev/tcp/...` and pipe-based exfil via `dd`.
+- **Node.js allowlist tightened** — Reduced the Node.js safe-host allowlist to prevent `node -e` with `http.request()` from evading detection.
+
+### PERSIST — Persistence Detection Expansion
+- **New patterns:** `npm install -g` (global package persistence), `python -m pip install` (Python package persistence), `crontab` (enhanced beyond `-l` exclusion), `at` command scheduling.
+- Sentinel `is_persistence_critical()` now covers systemd user units, autostart `.desktop` files, and git hooks.
+
+### API Auth
+- API endpoint authentication flags hardened — unauthenticated access to sensitive endpoints restricted.
+
+### Verification Status
+These fixes require **Red Lobster v5 testing** to verify effectiveness. The v0.3.1 scorecard (9/10, 90% detection rate) should improve significantly once verified.
