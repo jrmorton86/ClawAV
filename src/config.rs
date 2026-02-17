@@ -604,6 +604,17 @@ impl Default for SentinelConfig {
                     patterns: vec![".package-lock.json".to_string()],
                     policy: WatchPolicy::Watched,
                 },
+                // MCP config integrity (Tinman MCP-* coverage)
+                WatchPathConfig {
+                    path: "/home/openclaw/.mcp".to_string(),
+                    patterns: vec!["*.json".to_string(), "*.yaml".to_string()],
+                    policy: WatchPolicy::Watched,
+                },
+                WatchPathConfig {
+                    path: "/home/openclaw/.openclaw/mcp-servers".to_string(),
+                    patterns: vec!["*".to_string()],
+                    policy: WatchPolicy::Watched,
+                },
             ],
             quarantine_dir: default_quarantine_dir(),
             shadow_dir: default_shadow_dir(),

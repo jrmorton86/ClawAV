@@ -227,6 +227,15 @@ const CRYPTO_CLI_TOOLS: &[&str] = &[
     "brownie",
 ];
 
+/// MCP server registration/config tampering indicators
+const MCP_TAMPER_PATTERNS: &[&str] = &[
+    "mcp.json",
+    "mcp-servers",
+    ".mcp/",
+    "mcp_server",
+    "modelcontextprotocol",
+];
+
 /// Persistence-related binaries
 const PERSISTENCE_BINARIES: &[&str] = &["crontab", "at", "atq", "atrm", "batch"];
 
@@ -1179,6 +1188,27 @@ pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Sever
             return Some((BehaviorCategory::FinancialTheft, Severity::Warning));
         }
     }
+
+        // --- WARNING: MCP config tampering ---
+        if event.syscall_name == "openat" || event.syscall_name == "rename" || event.syscall_name == "unlink" {
+            if let Some(ref fp) = event.file_path {
+                for pattern in MCP_TAMPER_PATTERNS {
+                    if fp.contains(pattern) {
+                        return Some((BehaviorCategory::SecurityTamper, Severity::Warning));
+                    }
+                }
+            }
+        }
+        // Also catch write commands targeting MCP configs
+        for pattern in MCP_TAMPER_PATTERNS {
+            if cmd.contains(pattern) {
+                let is_write = ["echo", "tee", "sed", "mv", "cp", "cat >", ">>", "install"]
+                    .iter().any(|w| cmd.contains(w));
+                if is_write {
+                    return Some((BehaviorCategory::SecurityTamper, Severity::Warning));
+                }
+            }
+        }
 
     None
 }
@@ -3236,6 +3266,25 @@ mod tests {
         assert!(result.is_some());
         let (cat, _) = result.unwrap();
         assert_eq!(cat, BehaviorCategory::FinancialTheft);
+    }
+
+    // === MCP Attack Detection (Tinman MCP-*) ===
+
+    #[test]
+    fn test_mcp_config_write_detected() {
+        let event = make_exec_event(&["tee", "/home/user/.mcp/mcp.json"]);
+        let result = classify_behavior(&event);
+        assert!(result.is_some());
+        let (cat, sev) = result.unwrap();
+        assert_eq!(cat, BehaviorCategory::SecurityTamper);
+        assert_eq!(sev, Severity::Warning);
+    }
+
+    #[test]
+    fn test_mcp_server_dir_write_detected() {
+        let event = make_exec_event(&["cp", "evil.js", "/home/user/.openclaw/mcp-servers/backdoor.js"]);
+        let result = classify_behavior(&event);
+        assert!(result.is_some());
     }
 }
 
