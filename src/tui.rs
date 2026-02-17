@@ -194,10 +194,10 @@ impl App {
 
     /// Rebuild the field list for the currently selected config section.
     pub fn refresh_fields(&mut self) {
+        // Pre-cache tool status before borrowing config
+        let _ = self.is_tool_installed("falco");
+        let _ = self.is_tool_installed("samhain");
         if let Some(ref config) = self.config {
-            // Ensure tool status is cached
-            let _ = self.is_tool_installed("falco");
-            let _ = self.is_tool_installed("samhain");
             let section = &self.config_sections[self.config_selected_section];
             self.config_fields = get_section_fields(config, section, &self.tool_status_cache);
             if self.config_selected_field >= self.config_fields.len() && !self.config_fields.is_empty() {

@@ -40,6 +40,9 @@ pub const RECOMMENDED_AUDIT_RULES: &[&str] = &[
     "-w /etc/sudoers -p r -k clawtower_cred_read",
     // Network connect() monitoring for watched user (T6.1 — outbound escape detection)
     "-a always,exit -F arch=b64 -S connect -F uid=1000 -F success=1 -k clawtower_net_connect",
+    // sendfile/copy_file_range monitoring — catches shutil.copyfile() and similar bypasses
+    "-a always,exit -F arch=b64 -S sendfile -F uid=1000 -F success=1 -k clawtower_cred_read",
+    "-a always,exit -F arch=b64 -S copy_file_range -F uid=1000 -F success=1 -k clawtower_cred_read",
 ];
 
 use crate::alerts::{Alert, Severity};
@@ -133,7 +136,9 @@ fn syscall_name_aarch64(num: u32) -> &'static str {
         242 => "accept4",
         260 => "wait4",
         261 => "prlimit64",
+        271 => "sendfile",
         281 => "execveat",
+        285 => "copy_file_range",
         291 => "statx",
         _ => "unknown",
     }
@@ -384,14 +389,23 @@ pub fn check_tamper_event(event: &ParsedEvent) -> Option<Alert> {
     // Network connect() detection via auditd (T6.1)
     if line.contains("key=\"clawtower_net_connect\"") || line.contains("key=clawtower_net_connect") {
         let exe = extract_field(line, "exe").unwrap_or("unknown");
+        let exe_base = exe.rsplit('/').next().unwrap_or(exe);
         // Skip localhost connections and known-safe processes
         let is_safe = exe.contains("clawtower") || exe.contains("systemd") || exe.contains("dbus");
         if !is_safe {
-            return Some(Alert::new(
-                Severity::Warning,
-                "auditd:net_connect",
-                &format!("🌐 Outbound connect() by {}", exe),
-            ));
+            // Runtime interpreters making raw connect() calls are Critical
+            // (python ctypes, node net.Socket, ruby TCPSocket, etc.)
+            const RUNTIME_INTERPRETERS: &[&str] = &[
+                "python3", "python", "node", "nodejs", "perl", "ruby", "php", "lua",
+            ];
+            let is_runtime = RUNTIME_INTERPRETERS.iter().any(|&r| exe_base == r);
+            let severity = if is_runtime { Severity::Critical } else { Severity::Warning };
+            let msg = if is_runtime {
+                format!("🚨 Runtime connect(): {} — possible scripted exfiltration via raw socket", exe)
+            } else {
+                format!("🌐 Outbound connect() by {}", exe)
+            };
+            return Some(Alert::new(severity, "auditd:net_connect", &msg));
         }
     }
     None
@@ -1236,5 +1250,55 @@ mod tests {
         let event = parse_to_event(line, None).unwrap();
         let alert = check_tamper_event(&event);
         assert!(alert.is_none(), "systemd connect() should be ignored");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // RED LOBSTER v5 — Runtime connect() escalation tests
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_redlobster_python3_ctypes_connect_critical() {
+        let line = r#"type=SYSCALL msg=audit(1234567890.123:456): arch=c00000b7 syscall=203 success=yes exit=0 uid=1000 comm="python3" exe="/usr/bin/python3" key="clawtower_net_connect""#;
+        let event = parse_to_event(line, None).unwrap();
+        let alert = check_tamper_event(&event);
+        assert!(alert.is_some(), "python3 connect() must trigger alert");
+        assert_eq!(alert.unwrap().severity, Severity::Critical, "runtime connect must be Critical");
+    }
+
+    #[test]
+    fn test_redlobster_node_connect_critical() {
+        let line = r#"type=SYSCALL msg=audit(1234567890.123:456): arch=c00000b7 syscall=203 success=yes exit=0 uid=1000 comm="node" exe="/usr/bin/node" key="clawtower_net_connect""#;
+        let event = parse_to_event(line, None).unwrap();
+        let alert = check_tamper_event(&event);
+        assert!(alert.is_some(), "node connect() must trigger alert");
+        assert_eq!(alert.unwrap().severity, Severity::Critical, "runtime connect must be Critical");
+    }
+
+    #[test]
+    fn test_redlobster_ruby_connect_critical() {
+        let line = r#"type=SYSCALL msg=audit(1234567890.123:456): arch=c00000b7 syscall=203 success=yes exit=0 uid=1000 comm="ruby" exe="/usr/bin/ruby" key="clawtower_net_connect""#;
+        let event = parse_to_event(line, None).unwrap();
+        let alert = check_tamper_event(&event);
+        assert!(alert.is_some(), "ruby connect() must trigger alert");
+        assert_eq!(alert.unwrap().severity, Severity::Critical);
+    }
+
+    #[test]
+    fn test_redlobster_curl_connect_still_warning() {
+        let line = r#"type=SYSCALL msg=audit(1234567890.123:456): arch=c00000b7 syscall=203 success=yes exit=0 uid=1000 comm="curl" exe="/usr/bin/curl" key="clawtower_net_connect""#;
+        let event = parse_to_event(line, None).unwrap();
+        let alert = check_tamper_event(&event);
+        assert!(alert.is_some(), "curl connect() must trigger alert");
+        assert_eq!(alert.unwrap().severity, Severity::Warning, "non-runtime connect stays Warning");
+    }
+
+    #[test]
+    fn test_sendfile_syscall_name() {
+        assert_eq!(syscall_name_aarch64(271), "sendfile");
+    }
+
+    #[test]
+    fn test_copy_file_range_syscall_name() {
+        assert_eq!(syscall_name_aarch64(285), "copy_file_range");
     }
 }

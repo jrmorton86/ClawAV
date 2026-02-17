@@ -55,6 +55,18 @@ const CRITICAL_READ_PATHS: &[&str] = &[
     "/proc/1/environ",
 ];
 
+/// Agent-specific sensitive files (credentials, config with secrets)
+const AGENT_SENSITIVE_PATHS: &[&str] = &[
+    "auth-profiles.json",
+    "gateway.yaml",
+    ".aws/credentials",
+    ".ssh/id_ed25519",
+    ".ssh/id_rsa",
+];
+
+/// Wrapper binaries that execute other commands (used for stealth detection)
+const WRAPPER_BINARIES: &[&str] = &["script", "stdbuf", "timeout", "env", "nice", "nohup"];
+
 /// Sensitive files that should never be written by the watched user
 const CRITICAL_WRITE_PATHS: &[&str] = &[
     "/etc/passwd",
@@ -501,6 +513,41 @@ pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Sever
             }
         }
 
+        // --- CRITICAL: exec -a process name masking (stealth technique) ---
+        if binary == "bash" || binary == "sh" || binary == "zsh" {
+            if cmd.contains("exec -a") || cmd.contains("exec  -a") {
+                return Some((BehaviorCategory::SecurityTamper, Severity::Warning));
+            }
+        }
+
+        // --- CRITICAL: Wrapper binaries executing sensitive commands ---
+        // `script -c "cmd"` or `script -qc "cmd"` wraps command execution
+        if binary == "script" {
+            if args.iter().any(|a| a == "-c" || a.starts_with("-c") || a.contains("c")) {
+                // Check if any arg references a sensitive path
+                let has_sensitive = args.iter().skip(1).any(|a| {
+                    CRITICAL_READ_PATHS.iter().any(|p| a.contains(p)) ||
+                    AGENT_SENSITIVE_PATHS.iter().any(|p| a.contains(p))
+                });
+                if has_sensitive {
+                    return Some((BehaviorCategory::DataExfiltration, Severity::Critical));
+                }
+                return Some((BehaviorCategory::SecurityTamper, Severity::Warning));
+            }
+        }
+
+        // --- CRITICAL: xargs executing sensitive-file readers ---
+        if binary == "xargs" {
+            // xargs <reader> or xargs -I {} <reader> {}
+            let has_reader = args.iter().skip(1).any(|a| {
+                let base = a.rsplit('/').next().unwrap_or(a);
+                ["cat", "less", "more", "head", "tail", "xxd", "base64", "cp", "scp", "dd", "tar", "rsync", "sed", "tee"].contains(&base)
+            });
+            if has_reader {
+                return Some((BehaviorCategory::DataExfiltration, Severity::Warning));
+            }
+        }
+
         // --- CRITICAL: Persistence mechanisms ---
         if PERSISTENCE_BINARIES.iter().any(|&c| binary.eq_ignore_ascii_case(c)) {
             // crontab -l is read-only listing, not a modification
@@ -795,6 +842,11 @@ pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Sever
 
         // --- DNS exfiltration — tools that can encode data in DNS queries ---
         if DNS_EXFIL_COMMANDS.iter().any(|&c| binary.eq_ignore_ascii_case(c)) {
+            // TXT record queries are a classic DNS exfil/C2 channel
+            let has_txt = args.iter().skip(1).any(|arg| arg == "TXT" || arg == "txt");
+            if has_txt {
+                return Some((BehaviorCategory::DataExfiltration, Severity::Critical));
+            }
             // Check if any arg looks like encoded data (long subdomains, base64 patterns)
             let suspicious = args.iter().skip(1).any(|arg| {
                 // Long hostnames with many dots (data chunked across labels)
@@ -860,11 +912,17 @@ pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Sever
         }
 
         // --- CRITICAL: Reading sensitive files ---
-        if ["cat", "less", "more", "head", "tail", "xxd", "base64", "cp", "scp", "dd", "tar", "rsync", "sed", "tee"].contains(&binary) {
+        if ["cat", "less", "more", "head", "tail", "xxd", "base64", "cp", "scp", "dd", "tar", "rsync", "sed", "tee", "script"].contains(&binary) {
             for arg in args.iter().skip(1) {
                 for path in CRITICAL_READ_PATHS {
                     if arg.contains(path) {
                         return Some((BehaviorCategory::PrivilegeEscalation, Severity::Critical));
+                    }
+                }
+                // Also check agent-sensitive paths
+                for path in AGENT_SENSITIVE_PATHS {
+                    if arg.contains(path) {
+                        return Some((BehaviorCategory::DataExfiltration, Severity::Critical));
                     }
                 }
             }
@@ -923,7 +981,7 @@ pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Sever
         }
 
         // --- WARNING: Reading recon-sensitive files ---
-        if ["cat", "less", "more", "head", "tail", "cp", "dd", "tar", "rsync", "sed", "tee", "scp"].contains(&binary) {
+        if ["cat", "less", "more", "head", "tail", "cp", "dd", "tar", "rsync", "sed", "tee", "scp", "script"].contains(&binary) {
             for arg in args.iter().skip(1) {
                 for path in RECON_PATHS {
                     if arg.contains(path) {
@@ -1280,7 +1338,8 @@ mod tests {
     fn test_cat_ssh_key() {
         let event = make_exec_event(&["cat", "/home/user/.ssh/id_rsa"]);
         let result = classify_behavior(&event);
-        assert_eq!(result, Some((BehaviorCategory::Reconnaissance, Severity::Warning)));
+        // SSH private key reading is now Critical (agent-sensitive path)
+        assert_eq!(result, Some((BehaviorCategory::DataExfiltration, Severity::Critical)));
     }
 
     #[test]
@@ -2979,6 +3038,85 @@ mod tests {
         let event = make_exec_event(&["bash", "-c", "echo 'export LD_PRELOAD=/tmp/evil.so' >> /home/user/.bashrc"]);
         let result = classify_behavior(&event);
         assert!(result.is_some(), "classify_behavior should detect LD_PRELOAD persistence in .bashrc");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // RED LOBSTER v5 — Gap closure tests
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_redlobster_exec_a_masking() {
+        let event = make_exec_event(&["bash", "-c", "exec -a systemd-helper bash -c 'cat /etc/shadow'"]);
+        let result = classify_behavior(&event);
+        assert!(result.is_some(), "exec -a masking must be detected");
+        let (cat, sev) = result.unwrap();
+        assert_eq!(cat, BehaviorCategory::SecurityTamper);
+        assert!(sev >= Severity::Warning);
+    }
+
+    #[test]
+    fn test_redlobster_script_c_wrapper() {
+        let event = make_exec_event(&["script", "-qc", "cat /etc/shadow", "/dev/null"]);
+        let result = classify_behavior(&event);
+        assert!(result.is_some(), "script -c wrapper must be detected");
+        let (_, sev) = result.unwrap();
+        assert!(sev >= Severity::Warning);
+    }
+
+    #[test]
+    fn test_redlobster_script_c_cred_read() {
+        let event = make_exec_event(&["script", "-qc", "cat /home/openclaw/.openclaw/agents/main/agent/auth-profiles.json", "/dev/null"]);
+        let result = classify_behavior(&event);
+        assert!(result.is_some(), "script -c reading creds must be Critical");
+        let (_, sev) = result.unwrap();
+        assert_eq!(sev, Severity::Critical);
+    }
+
+    #[test]
+    fn test_redlobster_xargs_cat() {
+        let event = make_exec_event(&["xargs", "cat"]);
+        let result = classify_behavior(&event);
+        assert!(result.is_some(), "xargs cat must be detected");
+    }
+
+    #[test]
+    fn test_redlobster_dns_txt_exfil() {
+        let event = make_exec_event(&["dig", "+short", "TXT", "exfil-test.localhost", "@127.0.0.1"]);
+        let result = classify_behavior(&event);
+        assert_eq!(result, Some((BehaviorCategory::DataExfiltration, Severity::Critical)));
+    }
+
+    #[test]
+    fn test_redlobster_head_auth_profiles() {
+        let event = make_exec_event(&["head", "-c", "1", "/home/openclaw/.openclaw/agents/main/agent/auth-profiles.json"]);
+        let result = classify_behavior(&event);
+        assert!(result.is_some(), "head reading auth-profiles.json must be detected");
+        let (_, sev) = result.unwrap();
+        assert_eq!(sev, Severity::Critical);
+    }
+
+    #[test]
+    fn test_redlobster_cat_auth_profiles() {
+        let event = make_exec_event(&["cat", "/home/openclaw/.openclaw/agents/main/agent/auth-profiles.json"]);
+        let result = classify_behavior(&event);
+        assert!(result.is_some(), "cat reading auth-profiles.json must be detected");
+        assert_eq!(result.unwrap().1, Severity::Critical);
+    }
+
+    #[test]
+    fn test_redlobster_cat_gateway_yaml() {
+        let event = make_exec_event(&["cat", "/home/openclaw/.openclaw/gateway.yaml"]);
+        let result = classify_behavior(&event);
+        assert!(result.is_some(), "cat reading gateway.yaml must be detected");
+        assert_eq!(result.unwrap().1, Severity::Critical);
+    }
+
+    #[test]
+    fn test_redlobster_env_var_cat_shadow() {
+        // Shell expands $CMD=cat to just `cat /etc/shadow` at exec time
+        let event = make_exec_event(&["cat", "/etc/shadow"]);
+        let result = classify_behavior(&event);
+        assert_eq!(result, Some((BehaviorCategory::PrivilegeEscalation, Severity::Critical)));
     }
 }
 
