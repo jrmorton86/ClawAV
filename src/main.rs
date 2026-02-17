@@ -51,12 +51,14 @@ mod scanner;
 mod secureclaw;
 mod slack;
 mod tui;
+mod response;
 mod update;
 
 use anyhow::Result;
 use config::Config;
 use alerts::{Alert, Severity};
 use aggregator::AggregatorConfig;
+use response::{ResponseRequest, SharedPendingActions};
 use slack::SlackNotifier;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -583,6 +585,52 @@ async fn async_main() -> Result<()> {
     tokio::spawn(async move {
         aggregator::run_aggregator(raw_rx, alert_tx, slack_tx, agg_config, min_slack, agg_store).await;
     });
+
+    // Create shared pending actions store (unconditionally, needed by API and TUI)
+    let pending_store: SharedPendingActions = response::new_shared_pending();
+
+    // Spawn response engine if enabled
+    let response_tx: Option<mpsc::Sender<ResponseRequest>> = if config.response.enabled {
+        let (resp_tx, resp_rx) = mpsc::channel::<ResponseRequest>(100);
+        let resp_slack_tx = raw_tx.clone();
+        let resp_config = config.response.clone();
+        let playbook_dir = std::path::Path::new(&resp_config.playbook_dir);
+        let playbooks = response::load_playbooks(playbook_dir);
+        eprintln!("Response engine enabled: {} playbooks loaded, {}s timeout",
+            playbooks.len(), resp_config.timeout_secs);
+
+        let resp_pending = pending_store.clone();
+        tokio::spawn(async move {
+            response::run_response_engine(
+                resp_rx,
+                resp_slack_tx,
+                resp_pending,
+                resp_config,
+                playbooks,
+            ).await;
+        });
+        Some(resp_tx)
+    } else {
+        None
+    };
+
+    // Tee aggregated alerts to response engine (warnings+ get forwarded)
+    let alert_rx = if let Some(ref resp_tx) = response_tx {
+        let (tee_tx, tee_rx) = mpsc::channel::<Alert>(1000);
+        let resp_tx = resp_tx.clone();
+        tokio::spawn(async move {
+            let mut rx = alert_rx;
+            while let Some(alert) = rx.recv().await {
+                if alert.severity >= Severity::Warning {
+                    let _ = resp_tx.send(ResponseRequest::EvaluateAlert(alert.clone())).await;
+                }
+                let _ = tee_tx.send(alert).await;
+            }
+        });
+        tee_rx
+    } else {
+        alert_rx
+    };
 
     // Spawn firewall state monitor
     {
