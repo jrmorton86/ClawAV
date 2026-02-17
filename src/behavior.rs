@@ -197,6 +197,69 @@ const PRELOAD_BYPASS_PATTERNS: &[&str] = &[
     "/lib/ld-",
 ];
 
+/// Shell profile / rc files where LD_PRELOAD persistence is suspicious
+const SHELL_PROFILE_PATHS: &[&str] = &[
+    ".bashrc",
+    ".bash_profile",
+    ".zshrc",
+    ".zprofile",
+    ".zshenv",
+    ".profile",
+    "/etc/environment",
+    "/etc/profile",
+    "/etc/bash.bashrc",
+    "/etc/profile.d/",
+];
+
+/// Check if a path is a ClawTower guard path (allowlisted for LD_PRELOAD)
+fn is_clawtower_guard(value: &str) -> bool {
+    value.contains("clawguard") || value.contains("clawtower")
+        || value.contains("/usr/local/lib/libclawguard.so")
+}
+
+/// Detect LD_PRELOAD persistence: writing LD_PRELOAD= or export LD_PRELOAD to
+/// shell profile/rc files. Returns Critical if detected (unless it's ClawTower's
+/// own guard path).
+pub fn check_ld_preload_persistence(command: &str, file_path: Option<&str>) -> Option<(BehaviorCategory, Severity)> {
+    // Check if command writes LD_PRELOAD to a shell profile
+    let has_ld_preload = command.contains("LD_PRELOAD=") || command.contains("export LD_PRELOAD");
+    if !has_ld_preload {
+        return None;
+    }
+
+    // Check if target is a shell profile path
+    let targets_profile = if let Some(fp) = file_path {
+        SHELL_PROFILE_PATHS.iter().any(|p| fp.contains(p))
+    } else {
+        // Check if the command itself references a profile path (e.g., echo >> .bashrc)
+        SHELL_PROFILE_PATHS.iter().any(|p| command.contains(p))
+    };
+
+    if !targets_profile {
+        return None;
+    }
+
+    // Allow ClawTower's own guard
+    if is_clawtower_guard(command) {
+        return None;
+    }
+
+    Some((BehaviorCategory::SecurityTamper, Severity::Critical))
+}
+
+/// Check if a diff/content line contains LD_PRELOAD persistence (for sentinel use).
+/// Returns true if the line is suspicious (not a comment, not ClawTower's guard).
+pub fn is_ld_preload_persistence_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.starts_with('#') || trimmed.starts_with("---") || trimmed.starts_with("+++") {
+        return false;
+    }
+    if !(trimmed.contains("LD_PRELOAD=") || trimmed.contains("export LD_PRELOAD")) {
+        return false;
+    }
+    !is_clawtower_guard(trimmed)
+}
+
 /// Tools commonly used to compile static binaries or bypass dynamic linking
 const STATIC_COMPILE_PATTERNS: &[&str] = &[
     "-static",
@@ -411,6 +474,13 @@ pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Sever
                     return Some((BehaviorCategory::SecurityTamper, Severity::Critical));
                 }
             }
+        }
+    }
+
+    // Check for LD_PRELOAD persistence in shell profile writes
+    if let Some(ref cmd) = event.command {
+        if let result @ Some(_) = check_ld_preload_persistence(cmd, event.file_path.as_deref()) {
+            return result;
         }
     }
 
@@ -2796,6 +2866,98 @@ mod tests {
         let event = make_syscall_event("openat", "/etc/init.d/evil");
         let result = classify_behavior(&event);
         assert!(result.is_some(), "Write to /etc/init.d must trigger persistence alert");
+    }
+
+    // --- LD_PRELOAD persistence detection ---
+
+    #[test]
+    fn test_ld_preload_persistence_bashrc() {
+        let result = check_ld_preload_persistence(
+            "echo 'export LD_PRELOAD=/tmp/evil.so' >> /home/user/.bashrc",
+            None,
+        );
+        assert!(result.is_some(), "LD_PRELOAD written to .bashrc should be detected");
+        let (cat, sev) = result.unwrap();
+        assert!(matches!(cat, BehaviorCategory::SecurityTamper));
+        assert_eq!(sev, Severity::Critical);
+    }
+
+    #[test]
+    fn test_ld_preload_persistence_etc_environment() {
+        let result = check_ld_preload_persistence(
+            "echo 'LD_PRELOAD=/tmp/hook.so' >> /etc/environment",
+            Some("/etc/environment"),
+        );
+        assert!(result.is_some(), "LD_PRELOAD written to /etc/environment should be detected");
+    }
+
+    #[test]
+    fn test_ld_preload_persistence_zshrc() {
+        let result = check_ld_preload_persistence(
+            "echo 'export LD_PRELOAD=/tmp/evil.so' >> .zshrc",
+            None,
+        );
+        assert!(result.is_some(), "LD_PRELOAD written to .zshrc should be detected");
+    }
+
+    #[test]
+    fn test_ld_preload_persistence_profile_d() {
+        let result = check_ld_preload_persistence(
+            "echo 'LD_PRELOAD=/opt/hook.so' > /etc/profile.d/hook.sh",
+            Some("/etc/profile.d/hook.sh"),
+        );
+        assert!(result.is_some(), "LD_PRELOAD written to /etc/profile.d/ should be detected");
+    }
+
+    #[test]
+    fn test_ld_preload_persistence_clawtower_guard_allowed() {
+        let result = check_ld_preload_persistence(
+            "echo 'LD_PRELOAD=/usr/local/lib/libclawguard.so' >> /etc/environment",
+            Some("/etc/environment"),
+        );
+        assert!(result.is_none(), "ClawTower's own guard should be allowlisted");
+    }
+
+    #[test]
+    fn test_ld_preload_persistence_clawtower_keyword_allowed() {
+        let result = check_ld_preload_persistence(
+            "echo 'LD_PRELOAD=/opt/clawtower/lib/hook.so' >> .bashrc",
+            None,
+        );
+        assert!(result.is_none(), "Path containing 'clawtower' should be allowlisted");
+    }
+
+    #[test]
+    fn test_ld_preload_persistence_no_profile_target() {
+        let result = check_ld_preload_persistence(
+            "echo 'LD_PRELOAD=/tmp/evil.so' > /tmp/notes.txt",
+            Some("/tmp/notes.txt"),
+        );
+        assert!(result.is_none(), "LD_PRELOAD written to non-profile file should not trigger");
+    }
+
+    #[test]
+    fn test_is_ld_preload_persistence_line_detects() {
+        assert!(is_ld_preload_persistence_line("LD_PRELOAD=/tmp/evil.so"));
+        assert!(is_ld_preload_persistence_line("export LD_PRELOAD=/tmp/evil.so"));
+    }
+
+    #[test]
+    fn test_is_ld_preload_persistence_line_skips_comments() {
+        assert!(!is_ld_preload_persistence_line("# LD_PRELOAD=/tmp/evil.so"));
+    }
+
+    #[test]
+    fn test_is_ld_preload_persistence_line_allows_clawtower() {
+        assert!(!is_ld_preload_persistence_line("LD_PRELOAD=/usr/local/lib/libclawguard.so"));
+        assert!(!is_ld_preload_persistence_line("export LD_PRELOAD=/opt/clawtower/guard.so"));
+    }
+
+    #[test]
+    fn test_classify_behavior_ld_preload_persistence() {
+        let mut event = make_exec_event(&["bash", "-c", "echo 'export LD_PRELOAD=/tmp/evil.so' >> /home/user/.bashrc"]);
+        let result = classify_behavior(&event);
+        assert!(result.is_some(), "classify_behavior should detect LD_PRELOAD persistence in .bashrc");
     }
 }
 

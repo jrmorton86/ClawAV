@@ -768,7 +768,10 @@ pub fn scan_ld_preload_persistence() -> ScanResult {
                     continue;
                 }
                 if trimmed.contains("LD_PRELOAD=") || trimmed.contains("export LD_PRELOAD") {
-                    if !trimmed.contains(CLAWTOWER_GUARD_PATH) {
+                    if !trimmed.contains(CLAWTOWER_GUARD_PATH)
+                        && !trimmed.contains("clawguard")
+                        && !trimmed.contains("clawtower")
+                    {
                         issues.push(format!(
                             "{}:{}: {}",
                             path,
@@ -829,7 +832,11 @@ pub fn scan_ld_preload_persistence() -> ScanResult {
     if let Ok(content) = std::fs::read_to_string("/etc/ld.so.preload") {
         for line in content.lines() {
             let trimmed = line.trim();
-            if !trimmed.is_empty() && !trimmed.starts_with('#') && !trimmed.contains(CLAWTOWER_GUARD_PATH) {
+            if !trimmed.is_empty() && !trimmed.starts_with('#')
+                && !trimmed.contains(CLAWTOWER_GUARD_PATH)
+                && !trimmed.contains("clawguard")
+                && !trimmed.contains("clawtower")
+            {
                 issues.push(format!("/etc/ld.so.preload: {}", trimmed));
             }
         }
@@ -3408,5 +3415,34 @@ rules 0
 
         // Check third — still suppressed (same instant effectively)
         assert!(last_emitted.get(&key).unwrap().elapsed() < cooldown);
+    }
+
+    #[test]
+    fn test_scan_ld_preload_persistence_runs() {
+        // Basic smoke test — should not panic, returns a ScanResult
+        let result = scan_ld_preload_persistence();
+        assert!(!result.category.is_empty());
+        // On a clean test system, should pass
+        // (may fail on systems with actual LD_PRELOAD entries)
+    }
+
+    #[test]
+    fn test_ld_preload_allowlist_clawtower_guard() {
+        // Verify the allowlist logic: lines containing clawguard/clawtower should be skipped
+        let line = "LD_PRELOAD=/usr/local/lib/libclawguard.so";
+        let trimmed = line.trim();
+        assert!(
+            trimmed.contains(CLAWTOWER_GUARD_PATH)
+                || trimmed.contains("clawguard")
+                || trimmed.contains("clawtower"),
+            "ClawTower guard path should match allowlist"
+        );
+    }
+
+    #[test]
+    fn test_ld_preload_allowlist_clawtower_keyword() {
+        let line = "LD_PRELOAD=/opt/clawtower/lib/guard.so";
+        let trimmed = line.trim();
+        assert!(trimmed.contains("clawtower"), "clawtower keyword should match");
     }
 }

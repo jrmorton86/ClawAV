@@ -431,6 +431,22 @@ impl Sentinel {
             // Watched policy or unknown — update shadow
             let _ = Self::write_shadow_hardened(&shadow, current.as_bytes());
 
+            // Scan diff for LD_PRELOAD persistence attempts
+            if !diff.is_empty() {
+                let has_ld_preload = diff.lines().any(|line| {
+                    // Only check added lines (starting with '+' but not '+++')
+                    line.starts_with('+') && !line.starts_with("+++")
+                        && crate::behavior::is_ld_preload_persistence_line(&line[1..])
+                });
+                if has_ld_preload {
+                    let _ = self.alert_tx.send(Alert::new(
+                        Severity::Critical,
+                        "sentinel",
+                        &format!("LD_PRELOAD persistence detected in {}: diff:\n{}", path, diff),
+                    )).await;
+                }
+            }
+
             // Cognitive file detection: .md and .txt files can carry prompt
             // injections, so elevate severity and include the diff.
             let is_cognitive = path.ends_with(".md") || path.ends_with(".txt");
@@ -2098,5 +2114,101 @@ mod tests {
             "Should get change alert, not content scan threat: {}", alert.message);
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn test_sentinel_ld_preload_diff_detection() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shadow_dir = tmp.path().join("shadow");
+        let quarantine_dir = tmp.path().join("quarantine");
+        std::fs::create_dir_all(&shadow_dir).unwrap();
+        std::fs::create_dir_all(&quarantine_dir).unwrap();
+
+        // Create a watched file (simulating .bashrc)
+        let bashrc = tmp.path().join("bashrc");
+        std::fs::write(&bashrc, "# normal bashrc\nalias ll='ls -la'\n").unwrap();
+
+        let config = SentinelConfig {
+            enabled: true,
+            watch_paths: vec![WatchPathConfig {
+                path: bashrc.to_string_lossy().to_string(),
+                patterns: vec!["*".to_string()],
+                policy: WatchPolicy::Watched,
+            }],
+            quarantine_dir: quarantine_dir.to_string_lossy().to_string(),
+            shadow_dir: shadow_dir.to_string_lossy().to_string(),
+            debounce_ms: 200,
+            scan_content: false,
+            max_file_size_kb: 1024,
+            exclude_content_scan: vec![],
+            content_scan_excludes: vec![],
+        };
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(100);
+        let sentinel = Sentinel::new(config, tx, None).unwrap();
+
+        // Initialize shadow
+        sentinel.handle_change(&bashrc.to_string_lossy()).await;
+        // Drain init alert
+        let _ = rx.try_recv();
+
+        // Now inject LD_PRELOAD
+        std::fs::write(&bashrc, "# normal bashrc\nalias ll='ls -la'\nexport LD_PRELOAD=/tmp/evil.so\n").unwrap();
+        sentinel.handle_change(&bashrc.to_string_lossy()).await;
+
+        // Should get a Critical LD_PRELOAD alert
+        let mut found_ld_preload = false;
+        while let Ok(alert) = rx.try_recv() {
+            if alert.message.contains("LD_PRELOAD persistence") && alert.severity == Severity::Critical {
+                found_ld_preload = true;
+            }
+        }
+        assert!(found_ld_preload, "Should detect LD_PRELOAD persistence in diff");
+    }
+
+    #[tokio::test]
+    async fn test_sentinel_ld_preload_diff_allows_clawtower() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shadow_dir = tmp.path().join("shadow");
+        let quarantine_dir = tmp.path().join("quarantine");
+        std::fs::create_dir_all(&shadow_dir).unwrap();
+        std::fs::create_dir_all(&quarantine_dir).unwrap();
+
+        let bashrc = tmp.path().join("bashrc");
+        std::fs::write(&bashrc, "# normal\n").unwrap();
+
+        let config = SentinelConfig {
+            enabled: true,
+            watch_paths: vec![WatchPathConfig {
+                path: bashrc.to_string_lossy().to_string(),
+                patterns: vec!["*".to_string()],
+                policy: WatchPolicy::Watched,
+            }],
+            quarantine_dir: quarantine_dir.to_string_lossy().to_string(),
+            shadow_dir: shadow_dir.to_string_lossy().to_string(),
+            debounce_ms: 200,
+            scan_content: false,
+            max_file_size_kb: 1024,
+            exclude_content_scan: vec![],
+            content_scan_excludes: vec![],
+        };
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(100);
+        let sentinel = Sentinel::new(config, tx, None).unwrap();
+
+        sentinel.handle_change(&bashrc.to_string_lossy()).await;
+        let _ = rx.try_recv();
+
+        // Add ClawTower's guard — should NOT fire critical
+        std::fs::write(&bashrc, "# normal\nexport LD_PRELOAD=/usr/local/lib/libclawguard.so\n").unwrap();
+        sentinel.handle_change(&bashrc.to_string_lossy()).await;
+
+        let mut found_ld_preload_crit = false;
+        while let Ok(alert) = rx.try_recv() {
+            if alert.message.contains("LD_PRELOAD persistence") && alert.severity == Severity::Critical {
+                found_ld_preload_crit = true;
+            }
+        }
+        assert!(!found_ld_preload_crit, "ClawTower guard LD_PRELOAD should not trigger critical alert");
     }
 }
