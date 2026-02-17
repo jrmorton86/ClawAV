@@ -2200,6 +2200,47 @@ pub async fn run_periodic_scans(
     }
 }
 
+/// Spawn a fast-cycle persistence-only scan task (default 300s interval).
+///
+/// Runs only `scan_user_persistence()` at a higher frequency than full scans,
+/// ensuring persistence mechanisms are detected within minutes, not hours.
+pub async fn run_persistence_scans(
+    interval_secs: u64,
+    raw_tx: mpsc::Sender<Alert>,
+) {
+    use std::collections::HashMap;
+    use std::time::Instant;
+
+    let mut last_emitted: HashMap<String, Instant> = HashMap::new();
+    let cooldown = Duration::from_secs(600); // 10 min cooldown for persistence alerts
+
+    // Initial delay to avoid overlap with first full scan
+    sleep(Duration::from_secs(30)).await;
+
+    loop {
+        let results = tokio::task::spawn_blocking(scan_user_persistence)
+            .await
+            .unwrap_or_default();
+
+        let now = Instant::now();
+        for result in &results {
+            if let Some(alert) = result.to_alert() {
+                let dedup_key = format!("persist_fast:{}:{}", result.category,
+                    match result.status { ScanStatus::Pass => "pass", ScanStatus::Warn => "warn", ScanStatus::Fail => "fail" });
+                if let Some(last) = last_emitted.get(&dedup_key) {
+                    if now.duration_since(*last) < cooldown {
+                        continue;
+                    }
+                }
+                last_emitted.insert(dedup_key, now);
+                let _ = raw_tx.send(alert).await;
+            }
+        }
+
+        sleep(Duration::from_secs(interval_secs)).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

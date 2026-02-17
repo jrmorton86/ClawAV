@@ -10,8 +10,10 @@
 //! engine, SecureClaw patterns, and tamper detection before emitting alerts.
 
 use anyhow::Result;
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::fs::File;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;

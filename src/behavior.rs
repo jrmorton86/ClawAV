@@ -439,7 +439,11 @@ pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Sever
 
         // systemd timer/service creation
         if binary == "systemctl" && args.iter().any(|a| a == "enable" || a == "start") {
-            // Enabling/starting arbitrary services could be persistence
+            // User-level persistence via systemctl --user is especially suspicious
+            if args.iter().any(|a| a == "--user") {
+                return Some((BehaviorCategory::SecurityTamper, Severity::Critical));
+            }
+            // System-level enable/start is still suspicious but lower severity
             return Some((BehaviorCategory::SecurityTamper, Severity::Warning));
         }
 
@@ -2244,6 +2248,20 @@ mod tests {
         let event = make_exec_event(&["batch"]);
         let result = classify_behavior(&event);
         assert_eq!(result, Some((BehaviorCategory::SecurityTamper, Severity::Critical)));
+    }
+
+    #[test]
+    fn test_systemctl_user_enable_is_critical() {
+        let event = make_exec_event(&["systemctl", "--user", "enable", "evil.timer"]);
+        let result = classify_behavior(&event);
+        assert_eq!(result, Some((BehaviorCategory::SecurityTamper, Severity::Critical)));
+    }
+
+    #[test]
+    fn test_systemctl_system_enable_is_warning() {
+        let event = make_exec_event(&["systemctl", "enable", "some.service"]);
+        let result = classify_behavior(&event);
+        assert_eq!(result, Some((BehaviorCategory::SecurityTamper, Severity::Warning)));
     }
 
     // --- False positive checks ---

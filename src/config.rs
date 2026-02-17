@@ -405,6 +405,8 @@ fn default_content_scan_excludes() -> Vec<String> {
         "**/.openclaw/**/auth-profiles.json".to_string(),
         "**/.openclaw/credentials/**".to_string(),
         "**/superpowers/skills/**".to_string(),
+        "**/skills/*/SKILL.md".to_string(),
+        "**/.openclaw/workspace/*.md".to_string(),
     ]
 }
 
@@ -415,6 +417,7 @@ fn default_content_scan_excludes() -> Vec<String> {
 fn default_exclude_content_scan() -> Vec<String> {
     vec![
         "superpowers/skills".to_string(),
+        ".openclaw/workspace".to_string(),
     ]
 }
 

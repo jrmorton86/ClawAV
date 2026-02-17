@@ -131,6 +131,9 @@ pub struct Sentinel {
     config: SentinelConfig,
     alert_tx: mpsc::Sender<Alert>,
     engine: Option<Arc<SecureClawEngine>>,
+    /// Tracks files recently restored from shadow to suppress the inotify event
+    /// that the restore itself generates (prevents quarantine→restore→re-quarantine loops).
+    recently_restored: HashMap<String, Instant>,
 }
 
 impl Sentinel {
@@ -161,7 +164,7 @@ impl Sentinel {
             }
         }
 
-        Ok(Self { config, alert_tx, engine })
+        Ok(Self { config, alert_tx, engine, recently_restored: HashMap::new() })
     }
 
     /// Check if a path is in a persistence-critical directory and matches
@@ -198,7 +201,7 @@ impl Sentinel {
     /// For protected files: restores from shadow copy and fires CRIT alert.
     /// For watched files: fires CRIT alert about deletion.
     /// If no shadow copy exists, fires alert but cannot restore.
-    pub async fn handle_deletion(&self, path: &str) {
+    pub async fn handle_deletion(&mut self, path: &str) {
         let file_path = Path::new(path);
 
         // If the file somehow still exists, nothing to do
@@ -221,6 +224,7 @@ impl Sentinel {
 
             match std::fs::copy(&shadow, file_path) {
                 Ok(_) => {
+                    self.recently_restored.insert(path.to_string(), Instant::now());
                     let _ = self.alert_tx.send(Alert::new(
                         Severity::Critical,
                         "sentinel",
@@ -249,11 +253,22 @@ impl Sentinel {
     /// For protected files: quarantines the modified version and restores from shadow.
     /// For watched files: updates the shadow copy and emits an Info alert.
     /// If content scanning is enabled, runs SecureClaw patterns against the file.
-    pub async fn handle_change(&self, path: &str) {
+    pub async fn handle_change(&mut self, path: &str) {
         let file_path = Path::new(path);
         if !file_path.exists() {
             return;
         }
+
+        // Skip files we just restored from shadow — the restore itself triggers
+        // an inotify event which would re-enter this function and potentially
+        // re-quarantine the file, creating an infinite loop.
+        if let Some(restored_at) = self.recently_restored.get(path) {
+            if restored_at.elapsed() < Duration::from_secs(2) {
+                return;
+            }
+        }
+        // Remove expired entry (outside borrow scope)
+        self.recently_restored.remove(path);
 
         // Check file size limit
         if let Ok(meta) = std::fs::metadata(file_path) {
@@ -348,6 +363,7 @@ impl Sentinel {
 
             if shadow.exists() {
                 let _ = std::fs::copy(&shadow, file_path);
+                self.recently_restored.insert(path.to_string(), Instant::now());
             }
 
             let msg = if threat_found {
@@ -410,7 +426,7 @@ impl Sentinel {
     /// Start the sentinel event loop, watching configured paths via inotify.
     ///
     /// Runs forever, debouncing filesystem events and dispatching to [`handle_change`](Self::handle_change).
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(mut self) -> Result<()> {
         use notify::{Config as NotifyConfig, Event, RecommendedWatcher, RecursiveMode, Watcher};
 
         let (ntx, mut nrx) = mpsc::channel::<Event>(500);
@@ -479,6 +495,8 @@ impl Sentinel {
                         pending.remove(&path);
                         self.handle_change(&path).await;
                     }
+                    // Periodically prune expired restore-debounce entries
+                    self.recently_restored.retain(|_, ts| ts.elapsed() < Duration::from_secs(5));
                 }
             }
         }
