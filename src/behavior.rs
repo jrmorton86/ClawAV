@@ -236,6 +236,36 @@ const MCP_TAMPER_PATTERNS: &[&str] = &[
     "modelcontextprotocol",
 ];
 
+/// CLI tools that perform external destructive actions
+const DESTRUCTIVE_EXTERNAL_TOOLS: &[&str] = &[
+    "gh issue close",
+    "gh pr close",
+    "gh pr merge",
+    "gh repo delete",
+    "aws s3 rm",
+    "aws ec2 terminate",
+    "aws iam delete",
+    "aws lambda delete",
+    "gcloud compute instances delete",
+    "gcloud projects delete",
+    "az vm delete",
+    "az group delete",
+    "kubectl delete",
+    "terraform destroy",
+    "twilio",
+    "sendgrid",
+];
+
+/// External messaging tools — agent sending messages without confirmation
+const EXTERNAL_MESSAGING_TOOLS: &[&str] = &[
+    "gh issue create",
+    "gh pr create",
+    "gh pr comment",
+    "tweet",
+    "toot",
+    "slack-cli",
+];
+
 /// Persistence-related binaries
 const PERSISTENCE_BINARIES: &[&str] = &["crontab", "at", "atq", "atrm", "batch"];
 
@@ -1207,6 +1237,18 @@ pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Sever
                 if is_write {
                     return Some((BehaviorCategory::SecurityTamper, Severity::Warning));
                 }
+            }
+        }
+
+        // --- WARNING: Unauthorized external actions ---
+        for pattern in DESTRUCTIVE_EXTERNAL_TOOLS {
+            if cmd.contains(pattern) {
+                return Some((BehaviorCategory::DataExfiltration, Severity::Warning));
+            }
+        }
+        for pattern in EXTERNAL_MESSAGING_TOOLS {
+            if cmd.contains(pattern) {
+                return Some((BehaviorCategory::DataExfiltration, Severity::Info));
             }
         }
 
@@ -3283,6 +3325,36 @@ mod tests {
     #[test]
     fn test_mcp_server_dir_write_detected() {
         let event = make_exec_event(&["cp", "evil.js", "/home/user/.openclaw/mcp-servers/backdoor.js"]);
+        let result = classify_behavior(&event);
+        assert!(result.is_some());
+    }
+
+    // === Unauthorized Action Detection (Tinman UA-*) ===
+
+    #[test]
+    fn test_destructive_aws_action_detected() {
+        let event = make_exec_event(&["aws", "ec2", "terminate-instances", "--instance-ids", "i-1234"]);
+        let result = classify_behavior(&event);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_terraform_destroy_detected() {
+        let event = make_exec_event(&["terraform", "destroy", "-auto-approve"]);
+        let result = classify_behavior(&event);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_gh_pr_create_detected() {
+        let event = make_exec_event(&["gh", "pr", "create", "--title", "fix"]);
+        let result = classify_behavior(&event);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_kubectl_delete_detected() {
+        let event = make_exec_event(&["kubectl", "delete", "pod", "my-pod"]);
         let result = classify_behavior(&event);
         assert!(result.is_some());
     }
