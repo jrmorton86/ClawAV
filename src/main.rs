@@ -771,7 +771,7 @@ async fn async_main() -> Result<()> {
         });
 
         tokio::select! {
-            result = tui::run_tui(alert_rx, Some(config_path.clone())) => { result?; }
+            result = tui::run_tui(alert_rx, Some(config_path.clone()), pending_store.clone(), response_tx.clone()) => { result?; }
             _ = &mut shutdown_rx => { /* SIGTERM received, exit cleanly */ }
         }
     }
