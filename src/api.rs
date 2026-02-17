@@ -392,7 +392,8 @@ mod tests {
             .uri("/api/status")
             .body(Body::empty())
             .unwrap();
-        let resp = handle(req, store, Instant::now(), token).await.unwrap();
+        let pending: SharedPendingActions = Arc::new(Mutex::new(Vec::new()));
+        let resp = handle(req, store, Instant::now(), token, pending, None).await.unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
@@ -405,7 +406,8 @@ mod tests {
             .header("Authorization", "Bearer wrong-token")
             .body(Body::empty())
             .unwrap();
-        let resp = handle(req, store, Instant::now(), token).await.unwrap();
+        let pending: SharedPendingActions = Arc::new(Mutex::new(Vec::new()));
+        let resp = handle(req, store, Instant::now(), token, pending, None).await.unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
@@ -418,7 +420,8 @@ mod tests {
             .header("Authorization", "Bearer secret-token-123")
             .body(Body::empty())
             .unwrap();
-        let resp = handle(req, store, Instant::now(), token).await.unwrap();
+        let pending: SharedPendingActions = Arc::new(Mutex::new(Vec::new()));
+        let resp = handle(req, store, Instant::now(), token, pending, None).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
@@ -430,7 +433,8 @@ mod tests {
             .uri("/api/health")
             .body(Body::empty())
             .unwrap();
-        let resp = handle(req, store, Instant::now(), token).await.unwrap();
+        let pending: SharedPendingActions = Arc::new(Mutex::new(Vec::new()));
+        let resp = handle(req, store, Instant::now(), token, pending, None).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
@@ -442,7 +446,8 @@ mod tests {
             .uri("/api/status")
             .body(Body::empty())
             .unwrap();
-        let resp = handle(req, store, Instant::now(), token).await.unwrap();
+        let pending: SharedPendingActions = Arc::new(Mutex::new(Vec::new()));
+        let resp = handle(req, store, Instant::now(), token, pending, None).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK, "Empty auth_token means auth disabled");
     }
 
@@ -454,7 +459,8 @@ mod tests {
             .uri("/api/security")
             .body(Body::empty())
             .unwrap();
-        let resp = handle(req, store, Instant::now(), token).await.unwrap();
+        let pending: SharedPendingActions = Arc::new(Mutex::new(Vec::new()));
+        let resp = handle(req, store, Instant::now(), token, pending, None).await.unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 }

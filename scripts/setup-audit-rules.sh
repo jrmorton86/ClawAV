@@ -32,7 +32,8 @@ cat > "$RULES_FILE" << 'EOF'
 -w /home/openclaw/.openclaw/agents/main/sessions/ -p r -k openclaw_session_read
 
 # === Network connect() monitoring (Flag 6 — ESCAPE) ===
--a always,exit -F arch=b64 -S connect -F uid=1000 -F success=1 -k clawtower_net_connect
+# Monitor ALL connect() attempts — failed connects (ECONNREFUSED) are just as suspicious
+-a always,exit -F arch=b64 -S connect -F uid=1000 -k clawtower_net_connect
 
 # === sendfile/copy_file_range monitoring (catches shutil.copyfile bypass) ===
 -a always,exit -F arch=b64 -S sendfile -F uid=1000 -F success=1 -k clawtower_cred_read

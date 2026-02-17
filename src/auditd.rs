@@ -39,7 +39,8 @@ pub const RECOMMENDED_AUDIT_RULES: &[&str] = &[
     "-w /etc/gshadow -p r -k clawtower_cred_read",
     "-w /etc/sudoers -p r -k clawtower_cred_read",
     // Network connect() monitoring for watched user (T6.1 — outbound escape detection)
-    "-a always,exit -F arch=b64 -S connect -F uid=1000 -F success=1 -k clawtower_net_connect",
+    // Monitor ALL connect() — failed connects (ECONNREFUSED) are just as suspicious as successful ones
+    "-a always,exit -F arch=b64 -S connect -F uid=1000 -k clawtower_net_connect",
     // sendfile/copy_file_range monitoring — catches shutil.copyfile() and similar bypasses
     "-a always,exit -F arch=b64 -S sendfile -F uid=1000 -F success=1 -k clawtower_cred_read",
     "-a always,exit -F arch=b64 -S copy_file_range -F uid=1000 -F success=1 -k clawtower_cred_read",
@@ -566,7 +567,9 @@ pub async fn tail_audit_log_full(
     // File watches (-w) use inodes; when files are replaced/rewritten,
     // the inode changes and the watch goes stale. Reloading every 5 min
     // refreshes all watches to current inodes.
-    let mut last_rule_reload = std::time::Instant::now();
+    // Start with epoch-like instant so first iteration triggers an immediate reload,
+    // ensuring fresh inodes right after deploy/restart.
+    let mut last_rule_reload = std::time::Instant::now() - Duration::from_secs(600);
     const RULE_RELOAD_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
     loop {
         // Check if auditd rules need reloading (fixes inode staleness)
@@ -1332,6 +1335,16 @@ mod tests {
         let alert = check_tamper_event(&event);
         assert!(alert.is_some(), "curl connect() must trigger alert");
         assert_eq!(alert.unwrap().severity, Severity::Warning, "non-runtime connect stays Warning");
+    }
+
+    #[test]
+    fn test_redlobster_node_failed_connect_still_critical() {
+        // Failed connect (ECONNREFUSED) should still be detected — attacker trying to exfil
+        let line = r#"type=SYSCALL msg=audit(1234567890.123:456): arch=c00000b7 syscall=203 success=no exit=-111 uid=1000 comm="node" exe="/usr/bin/node" key="clawtower_net_connect""#;
+        let event = parse_to_event(line, None).unwrap();
+        let alert = check_tamper_event(&event);
+        assert!(alert.is_some(), "failed node connect() must trigger alert");
+        assert_eq!(alert.unwrap().severity, Severity::Critical);
     }
 
     #[test]
