@@ -485,7 +485,7 @@ pub async fn tail_audit_log_with_behavior_and_policy(
     policy_engine: Option<crate::policy::PolicyEngine>,
     secureclaw_engine: Option<Arc<crate::secureclaw::SecureClawEngine>>,
 ) -> Result<()> {
-    tail_audit_log_full(path, watched_users, tx, policy_engine, secureclaw_engine, None).await
+    tail_audit_log_full(path, watched_users, tx, policy_engine, secureclaw_engine, None, vec![]).await
 }
 
 /// Tail audit log with full detection: behavior, policy, SecureClaw, and network policy.
@@ -501,6 +501,7 @@ pub async fn tail_audit_log_full(
     policy_engine: Option<crate::policy::PolicyEngine>,
     secureclaw_engine: Option<Arc<crate::secureclaw::SecureClawEngine>>,
     netpolicy: Option<crate::netpolicy::NetPolicy>,
+    extra_safe_hosts: Vec<String>,
 ) -> Result<()> {
     use std::io::{Seek, SeekFrom};
     use tokio::time::{sleep, Duration};
@@ -560,7 +561,7 @@ pub async fn tail_audit_log_full(
 
                     // Run hardcoded behavior detection
                     if let Some((category, severity)) =
-                        crate::behavior::classify_behavior(&event)
+                        crate::behavior::classify_behavior(&event, &extra_safe_hosts)
                     {
                         let msg = format!(
                             "[BEHAVIOR:{}] {}",

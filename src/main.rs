@@ -443,9 +443,10 @@ async fn async_main() -> Result<()> {
             None
         };
         // Check read access before spawning
+        let extra_safe = config.behavior.safe_hosts.clone();
         if std::fs::metadata(&path).is_ok() {
             tokio::spawn(async move {
-                if let Err(e) = auditd::tail_audit_log_full(&path, watched, tx, pe, se, np).await {
+                if let Err(e) = auditd::tail_audit_log_full(&path, watched, tx, pe, se, np, extra_safe).await {
                     eprintln!("auditd monitor error: {}", e);
                 }
             });

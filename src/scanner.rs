@@ -2151,17 +2151,42 @@ fn scan_openclaw_security() -> Vec<ScanResult> {
 /// Spawn periodic scan task that runs all checks every `interval_secs` seconds.
 ///
 /// Results are stored in `scan_store` and non-passing results are forwarded as alerts.
+/// Normalize a scan finding message by stripping variable parts (timestamps, PIDs,
+/// counts, paths with numeric components) so that identical findings get the same fingerprint.
+fn normalize_finding(msg: &str) -> String {
+    msg.chars().map(|c| if c.is_ascii_digit() { '#' } else { c }).collect()
+}
+
+/// Build a dedup fingerprint from the scan category and its details.
+fn scan_fingerprint(category: &str, details: &str) -> String {
+    format!("{}:{}", category, normalize_finding(details))
+}
+
+/// Spawn periodic scan task that runs all checks every `interval_secs` seconds.
+///
+/// Results are stored in `scan_store` and non-passing results are forwarded as alerts.
+/// Uses a "known issues" cache to suppress repeated alerts for persistent findings:
+/// - Findings are fingerprinted (category + normalized message, stripping PIDs/timestamps)
+/// - Duplicate findings are suppressed unless `dedup_interval_secs` has elapsed
+/// - Critical findings always alert on first occurrence, then respect the dedup interval
+/// - When a previously-failing finding resolves (passes), an Info "resolved" alert fires
+///
+/// This scanner-level dedup complements the aggregator's fuzzy dedup: scanner dedup
+/// prevents identical findings from even reaching the aggregator across scan cycles,
+/// while the aggregator handles cross-source dedup within short time windows.
 pub async fn run_periodic_scans(
     interval_secs: u64,
     raw_tx: mpsc::Sender<Alert>,
     scan_store: SharedScanResults,
     openclaw_config: crate::config::OpenClawConfig,
+    dedup_interval_secs: u64,
 ) {
     use std::collections::HashMap;
     use std::time::Instant;
 
-    let mut last_emitted: HashMap<String, Instant> = HashMap::new();
-    let cooldown = Duration::from_secs(24 * 3600); // 24 hours
+    // Known issues cache: fingerprint → last alerted time
+    let mut known_issues: HashMap<String, Instant> = HashMap::new();
+    let dedup_window = Duration::from_secs(dedup_interval_secs);
 
     loop {
         // Run scans in blocking task since they use Command
@@ -2176,24 +2201,45 @@ pub async fn run_periodic_scans(
             *store = results.clone();
         }
 
-        // Convert to alerts and send (with 24h deduplication)
+        // Track which fingerprints are still active this cycle (for resolution detection)
+        let mut active_fingerprints: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        // Convert non-passing results to alerts with dedup
         let now = Instant::now();
         for result in &results {
+            if result.status == ScanStatus::Pass {
+                continue;
+            }
+
+            let fingerprint = scan_fingerprint(&result.category, &result.details);
+            active_fingerprints.insert(fingerprint.clone());
+
             if let Some(alert) = result.to_alert() {
-                let status_str = match result.status {
-                    ScanStatus::Pass => "pass",
-                    ScanStatus::Warn => "warn",
-                    ScanStatus::Fail => "fail",
-                };
-                let dedup_key = format!("{}:{}", result.category, status_str);
-                if let Some(last) = last_emitted.get(&dedup_key) {
-                    if now.duration_since(*last) < cooldown {
-                        continue; // Skip duplicate within cooldown
+                if let Some(last) = known_issues.get(&fingerprint) {
+                    if now.duration_since(*last) < dedup_window {
+                        // Within dedup window — suppress
+                        continue;
                     }
                 }
-                last_emitted.insert(dedup_key, now);
+                // First occurrence or dedup window expired — emit and update cache
+                known_issues.insert(fingerprint, now);
                 let _ = raw_tx.send(alert).await;
             }
+        }
+
+        // Check for resolved issues: fingerprints in cache but not active this cycle
+        let resolved: Vec<String> = known_issues.keys()
+            .filter(|fp| !active_fingerprints.contains(*fp))
+            .cloned()
+            .collect();
+        for fp in resolved {
+            known_issues.remove(&fp);
+            let category = fp.split(':').next().unwrap_or("scan");
+            let _ = raw_tx.send(Alert::new(
+                Severity::Info,
+                &format!("scan:{}", category),
+                &format!("[RESOLVED] Previously failing check now passes: {}", category),
+            )).await;
         }
 
         sleep(Duration::from_secs(interval_secs)).await;

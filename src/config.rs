@@ -47,6 +47,8 @@ pub struct Config {
     pub auto_update: AutoUpdateConfig,
     #[serde(default)]
     pub openclaw: OpenClawConfig,
+    #[serde(default)]
+    pub behavior: BehaviorConfig,
 }
 
 /// Auto-update configuration: checks GitHub releases periodically.
@@ -244,9 +246,14 @@ pub struct ScansConfig {
     /// Interval between persistence-specific scans in seconds (default: 300)
     #[serde(default = "default_persistence_interval")]
     pub persistence_interval: u64,
+    /// Deduplication interval for scan findings in seconds (default: 3600).
+    /// Identical scan findings are suppressed unless this interval has elapsed.
+    #[serde(default = "default_scan_dedup_interval")]
+    pub dedup_interval_secs: u64,
 }
 
 fn default_persistence_interval() -> u64 { 300 }
+fn default_scan_dedup_interval() -> u64 { 3600 }
 
 /// HTTP REST API server configuration.
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -637,6 +644,23 @@ impl Default for OpenClawConfig {
             mdns_check: false,
             plugin_watch: false,
             session_log_audit: false,
+        }
+    }
+}
+
+/// Behavior detection configuration: user-configurable safe hosts for exfiltration checks.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct BehaviorConfig {
+    /// Additional hosts to treat as safe for exfiltration detection.
+    /// These are merged with the built-in safe hosts list.
+    #[serde(default)]
+    pub safe_hosts: Vec<String>,
+}
+
+impl Default for BehaviorConfig {
+    fn default() -> Self {
+        Self {
+            safe_hosts: Vec::new(),
         }
     }
 }

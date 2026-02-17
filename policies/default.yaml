@@ -24,9 +24,16 @@ rules:
         - "raw.githubusercontent.com"
         - "api.brave.com"
         - "hooks.slack.com"
-        # AWS
-        - "amazonaws.com"
+        # AWS: specific service endpoints only (not broad amazonaws.com)
+        - "ssm.us-east-1.amazonaws.com"
+        - "s3.us-east-1.amazonaws.com"
+        - "ec2.us-east-1.amazonaws.com"
+        - "sts.amazonaws.com"
+        - "route53.amazonaws.com"
+        - "cloudfront.amazonaws.com"
         - "169.254.169.254"
+        # Loopback
+        - "::1"
         # Package managers
         - "registry.npmjs.org"
         - "crates.io"
