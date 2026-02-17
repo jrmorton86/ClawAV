@@ -107,8 +107,11 @@ fn policy_for_path(config: &SentinelConfig, path: &str) -> Option<WatchPolicy> {
         if path == wp.path {
             return Some(wp.policy.clone());
         }
-        // Directory prefix match — check if file matches patterns
-        if path.starts_with(&wp.path) {
+        // Directory prefix match — check if file is INSIDE the watched directory.
+        // Guard: the character after the prefix must be '/' to confirm it's a
+        // directory boundary, not just a filename prefix (e.g. "auth-profiles.json"
+        // must NOT match "auth-profiles.json.lock").
+        if path.starts_with(&wp.path) && path.as_bytes().get(wp.path.len()) == Some(&b'/') {
             let filename = Path::new(path)
                 .file_name()
                 .map(|f| f.to_string_lossy().to_string())
@@ -872,6 +875,22 @@ mod tests {
         let config = SentinelConfig::default();
         let policy = policy_for_path(&config, "/home/openclaw/.openclaw/workspace/superpowers/skills/some_skill/README.md");
         assert!(policy.is_none());
+    }
+
+    #[test]
+    fn test_policy_for_path_lockfile_not_matched() {
+        // .lock files must NOT match their parent file's watch path
+        // (e.g. auth-profiles.json.lock must not match auth-profiles.json)
+        let config = SentinelConfig::default();
+        let policy = policy_for_path(&config, "/home/openclaw/.openclaw/agents/main/agent/auth-profiles.json.lock");
+        assert!(policy.is_none(), "lockfile should not match watched file path, got: {:?}", policy);
+    }
+
+    #[test]
+    fn test_policy_for_path_sessions_lockfile_not_matched() {
+        let config = SentinelConfig::default();
+        let policy = policy_for_path(&config, "/home/openclaw/.openclaw/agents/main/sessions/sessions.json.lock");
+        assert!(policy.is_none(), "sessions lockfile should not match, got: {:?}", policy);
     }
 
     #[test]
