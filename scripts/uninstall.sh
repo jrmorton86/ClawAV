@@ -227,6 +227,8 @@ fi
 
 # ── 12. Remove config ────────────────────────────────────────────────────────
 log "Removing configuration..."
+# Clear protection flags on all config files before removal
+sudo find /etc/clawtower -type f -exec chattr -ia {} \; 2>/dev/null || true
 sudo rm -rf /etc/clawtower
 
 # ── 13. Remove data (unless --keep-data) ─────────────────────────────────────
