@@ -853,7 +853,7 @@ pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Sever
         }
 
         // --- WARNING: Reading recon-sensitive files ---
-        if ["cat", "less", "more", "head", "tail", "cp"].contains(&binary) {
+        if ["cat", "less", "more", "head", "tail", "cp", "dd", "tar", "rsync", "sed", "tee", "scp"].contains(&binary) {
             for arg in args.iter().skip(1) {
                 for path in RECON_PATHS {
                     if arg.contains(path) {
