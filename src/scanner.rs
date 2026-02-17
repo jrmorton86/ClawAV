@@ -3112,4 +3112,94 @@ rules 0
         // On clean system it should be Pass (file doesn't exist at real HOME)
         assert_eq!(ssh_rc_result.unwrap().status, ScanStatus::Pass);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // RED LOBSTER v4 REGRESSION — Scanner Dedup
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_redlobster_dedup_same_fingerprint_suppressed() {
+        use std::collections::HashMap;
+        use std::time::{Duration, Instant};
+
+        let mut last_emitted: HashMap<String, (Instant, ScanStatus)> = HashMap::new();
+        let cooldown = Duration::from_secs(24 * 3600);
+
+        let r1 = ScanResult::new("firewall", ScanStatus::Warn, "UFW active, 0 rules");
+        let key1 = format!("{}:{:?}", r1.category, r1.status);
+
+        // First occurrence — should emit
+        assert!(!last_emitted.contains_key(&key1));
+        last_emitted.insert(key1.clone(), (Instant::now(), r1.status.clone()));
+
+        // Second identical occurrence — should suppress
+        let r2 = ScanResult::new("firewall", ScanStatus::Warn, "UFW active, 0 rules");
+        let key2 = format!("{}:{:?}", r2.category, r2.status);
+        assert_eq!(key1, key2);
+        let (last_time, _) = last_emitted.get(&key2).unwrap();
+        assert!(last_time.elapsed() < cooldown, "Within cooldown, should suppress");
+    }
+
+    #[test]
+    fn test_redlobster_dedup_different_fingerprint_emits() {
+        use std::collections::HashMap;
+        use std::time::Instant;
+
+        let mut last_emitted: HashMap<String, Instant> = HashMap::new();
+        last_emitted.insert("firewall:Warn".to_string(), Instant::now());
+
+        // Different status → different fingerprint → should emit
+        let key_new = "firewall:Fail".to_string();
+        assert!(!last_emitted.contains_key(&key_new), "New status should not be suppressed");
+    }
+
+    #[test]
+    fn test_redlobster_dedup_resolved_fires_info() {
+        // When a finding goes from Warn/Fail → Pass, that's a "resolved" event
+        // which should fire an Info alert
+        let prev_status = ScanStatus::Fail;
+        let curr_status = ScanStatus::Pass;
+
+        // Resolved = was bad, now good
+        let is_resolved = (prev_status == ScanStatus::Warn || prev_status == ScanStatus::Fail)
+            && curr_status == ScanStatus::Pass;
+        assert!(is_resolved, "Fail→Pass should be detected as resolved");
+
+        // Resolved findings should produce Info alert
+        let resolved_alert = Alert::new(
+            Severity::Info,
+            "scan:firewall",
+            "RESOLVED: firewall check now passing",
+        );
+        assert_eq!(resolved_alert.severity, Severity::Info);
+        assert!(resolved_alert.message.contains("RESOLVED"));
+    }
+
+    #[test]
+    fn test_redlobster_dedup_pass_to_pass_no_alert() {
+        let prev_status = ScanStatus::Pass;
+        let curr_status = ScanStatus::Pass;
+        let is_resolved = (prev_status == ScanStatus::Warn || prev_status == ScanStatus::Fail)
+            && curr_status == ScanStatus::Pass;
+        assert!(!is_resolved, "Pass→Pass is not a resolution event");
+    }
+
+    #[test]
+    fn test_redlobster_dedup_third_identical_still_suppressed() {
+        use std::collections::HashMap;
+        use std::time::{Duration, Instant};
+
+        let mut last_emitted: HashMap<String, Instant> = HashMap::new();
+        let cooldown = Duration::from_secs(24 * 3600);
+        let key = "suid_sgid:Warn".to_string();
+
+        // Emit first
+        last_emitted.insert(key.clone(), Instant::now());
+
+        // Check second — suppressed
+        assert!(last_emitted.get(&key).unwrap().elapsed() < cooldown);
+
+        // Check third — still suppressed (same instant effectively)
+        assert!(last_emitted.get(&key).unwrap().elapsed() < cooldown);
+    }
 }

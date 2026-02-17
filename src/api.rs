@@ -316,4 +316,82 @@ mod tests {
         assert_eq!(warn, 1);
         assert_eq!(crit, 1);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // RED LOBSTER v4 REGRESSION — API Auth Bypass
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_redlobster_no_bearer_gets_401() {
+        let store = new_shared_store(100);
+        let token = Arc::new("secret-token-123".to_string());
+        let req = Request::builder()
+            .uri("/api/status")
+            .body(Body::empty())
+            .unwrap();
+        let resp = handle(req, store, Instant::now(), token).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_redlobster_wrong_bearer_gets_401() {
+        let store = new_shared_store(100);
+        let token = Arc::new("secret-token-123".to_string());
+        let req = Request::builder()
+            .uri("/api/alerts")
+            .header("Authorization", "Bearer wrong-token")
+            .body(Body::empty())
+            .unwrap();
+        let resp = handle(req, store, Instant::now(), token).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_redlobster_correct_bearer_gets_200() {
+        let store = new_shared_store(100);
+        let token = Arc::new("secret-token-123".to_string());
+        let req = Request::builder()
+            .uri("/api/status")
+            .header("Authorization", "Bearer secret-token-123")
+            .body(Body::empty())
+            .unwrap();
+        let resp = handle(req, store, Instant::now(), token).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_redlobster_health_bypasses_auth() {
+        let store = new_shared_store(100);
+        let token = Arc::new("secret-token-123".to_string());
+        let req = Request::builder()
+            .uri("/api/health")
+            .body(Body::empty())
+            .unwrap();
+        let resp = handle(req, store, Instant::now(), token).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_redlobster_empty_token_no_auth_required() {
+        let store = new_shared_store(100);
+        let token = Arc::new(String::new());
+        let req = Request::builder()
+            .uri("/api/status")
+            .body(Body::empty())
+            .unwrap();
+        let resp = handle(req, store, Instant::now(), token).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "Empty auth_token means auth disabled");
+    }
+
+    #[tokio::test]
+    async fn test_redlobster_security_endpoint_requires_auth() {
+        let store = new_shared_store(100);
+        let token = Arc::new("mytoken".to_string());
+        let req = Request::builder()
+            .uri("/api/security")
+            .body(Body::empty())
+            .unwrap();
+        let resp = handle(req, store, Instant::now(), token).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
 }

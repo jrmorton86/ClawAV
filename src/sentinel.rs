@@ -2012,4 +2012,91 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // RED LOBSTER v4 REGRESSION — Sentinel Content Scan Exclusions
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_redlobster_skill_md_glob_skips_content_scan() {
+        // **/skills/*/SKILL.md should match content scan exclusion
+        let pattern = "**/skills/*/SKILL.md";
+        assert!(glob_match::glob_match(pattern,
+            "/home/openclaw/.openclaw/workspace/superpowers/skills/web_search/SKILL.md"));
+        assert!(glob_match::glob_match(pattern,
+            "/home/openclaw/.openclaw/workspace/superpowers/skills/camera/SKILL.md"));
+    }
+
+    #[test]
+    fn test_redlobster_skill_md_glob_rejects_non_skill() {
+        let pattern = "**/skills/*/SKILL.md";
+        assert!(!glob_match::glob_match(pattern,
+            "/home/openclaw/.openclaw/workspace/superpowers/skills/web_search/README.md"));
+        assert!(!glob_match::glob_match(pattern,
+            "/home/openclaw/.openclaw/workspace/SOUL.md"));
+    }
+
+    #[test]
+    fn test_redlobster_skill_md_still_gets_inotify_detection() {
+        // SKILL.md paths should still be detected by sentinel (watched policy)
+        let config = SentinelConfig::default();
+        let policy = policy_for_path(&config,
+            "/home/openclaw/.openclaw/workspace/superpowers/skills/some_skill/SKILL.md");
+        assert!(policy.is_some(), "SKILL.md should match a watch path");
+        assert!(matches!(policy, Some(WatchPolicy::Watched)),
+            "SKILL.md should be Watched (inotify detection)");
+    }
+
+    #[test]
+    fn test_redlobster_skill_md_content_scan_excluded_default() {
+        // Default config should have exclusion for skills SKILL.md
+        let config = SentinelConfig::default();
+        let path = "/home/openclaw/.openclaw/workspace/superpowers/skills/test_skill/SKILL.md";
+        let excluded = config.content_scan_excludes.iter().any(|p| glob_match::glob_match(p, path))
+            || config.exclude_content_scan.iter().any(|s| path.contains(s));
+        assert!(excluded, "SKILL.md should be excluded from content scanning by default config");
+    }
+
+    #[tokio::test]
+    async fn test_redlobster_skill_md_change_triggers_alert() {
+        // Even though content scanning is excluded, file change should still fire alert
+        let tmp = std::env::temp_dir().join("sentinel_test_skill_md");
+        let _ = std::fs::remove_dir_all(&tmp);
+        let shadow_dir = tmp.join("shadow");
+        let quarantine_dir = tmp.join("quarantine");
+        let skills_dir = tmp.join("workspace/superpowers/skills/test_skill");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+
+        let skill_path = skills_dir.join("SKILL.md");
+        std::fs::write(&skill_path, "# Test Skill\n").unwrap();
+
+        let config = SentinelConfig {
+            enabled: true,
+            watch_paths: vec![WatchPathConfig {
+                path: skills_dir.to_string_lossy().to_string(),
+                patterns: vec!["SKILL.md".to_string()],
+                policy: WatchPolicy::Watched,
+            }],
+            quarantine_dir: quarantine_dir.to_string_lossy().to_string(),
+            shadow_dir: shadow_dir.to_string_lossy().to_string(),
+            debounce_ms: 200,
+            scan_content: true,
+            max_file_size_kb: 1024,
+            content_scan_excludes: vec!["**/skills/*/SKILL.md".to_string()],
+            exclude_content_scan: vec![],
+        };
+
+        let (tx, mut rx) = mpsc::channel::<Alert>(16);
+        let sentinel = Sentinel::new(config, tx, None).unwrap();
+
+        std::fs::write(&skill_path, "# Modified Skill\nNew content\n").unwrap();
+        sentinel.handle_change(&skill_path.to_string_lossy()).await;
+
+        let alert = rx.try_recv().unwrap();
+        // Should get an alert (inotify detection works) but NOT a content scan threat
+        assert!(alert.message.contains("File changed") || alert.message.contains("Cognitive file"),
+            "Should get change alert, not content scan threat: {}", alert.message);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }
