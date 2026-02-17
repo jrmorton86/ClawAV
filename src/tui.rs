@@ -20,8 +20,10 @@ use crossterm::{
 };
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, List, ListItem, Paragraph, Tabs},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs},
 };
+use zeroize::Zeroize;
+use std::collections::HashMap;
 use std::io;
 use tokio::sync::mpsc;
 use std::time::Duration;
@@ -92,6 +94,20 @@ pub struct App {
     pub config_saved_message: Option<String>,
     // Sudo popup state
     pub sudo_popup: Option<SudoPopup>,
+    // Scroll state per tab (tab index -> ListState)
+    pub list_states: [ListState; 5], // tabs 0-4 (alerts, network, falco, fim, system)
+    // Alert detail view
+    pub detail_alert: Option<Alert>,
+    // Search/filter
+    pub search_active: bool,
+    pub search_buffer: String,
+    pub search_filter: String, // committed search (applied on Enter)
+    // Pause alert feed
+    pub paused: bool,
+    // Cached tool installation status
+    pub tool_status_cache: HashMap<String, bool>,
+    // Muted sources (alerts from these sources are hidden)
+    pub muted_sources: Vec<String>,
 }
 
 /// State for the modal sudo password prompt overlay.
@@ -146,6 +162,18 @@ impl App {
             config_edit_buffer: String::new(),
             config_saved_message: None,
             sudo_popup: None,
+            list_states: std::array::from_fn(|_| {
+                let mut s = ListState::default();
+                s.select(Some(0));
+                s
+            }),
+            detail_alert: None,
+            search_active: false,
+            search_buffer: String::new(),
+            search_filter: String::new(),
+            paused: false,
+            tool_status_cache: HashMap::new(),
+            muted_sources: Vec::new(),
         }
     }
 
@@ -168,6 +196,25 @@ impl App {
                 self.config_selected_field = 0;
             }
         }
+    }
+
+    /// Check and cache whether a tool is installed (runs `which` once per tool).
+    pub fn is_tool_installed(&mut self, tool: &str) -> bool {
+        if let Some(&cached) = self.tool_status_cache.get(tool) {
+            return cached;
+        }
+        let installed = std::process::Command::new("which")
+            .arg(tool)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        self.tool_status_cache.insert(tool.to_string(), installed);
+        installed
+    }
+
+    /// Invalidate cached tool status (e.g., after installing).
+    pub fn invalidate_tool_cache(&mut self) {
+        self.tool_status_cache.clear();
     }
 
     /// Handle a keyboard event, dispatching to the appropriate tab/panel handler.
