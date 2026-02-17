@@ -1073,7 +1073,7 @@ fn render_config_tab(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(fields_list, chunks[1]);
 }
 
-fn ui(f: &mut Frame, app: &App) {
+fn ui(f: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(0)])
@@ -1090,10 +1090,10 @@ fn ui(f: &mut Frame, app: &App) {
 
     // Content area
     match app.selected_tab {
-        0 => render_alerts_tab(f, chunks[1], app),
-        1 => render_network_tab(f, chunks[1], app),
-        2 => render_falco_tab(f, chunks[1], app),
-        3 => render_fim_tab(f, chunks[1], app),
+        0 => render_alert_list(f, chunks[1], app, 0, None, "Alert Feed"),
+        1 => render_alert_list(f, chunks[1], app, 1, Some("network"), "Network Activity"),
+        2 => render_alert_list(f, chunks[1], app, 2, Some("falco"), "Falco eBPF Alerts"),
+        3 => render_alert_list(f, chunks[1], app, 3, Some("samhain"), "File Integrity"),
         4 => render_system_tab(f, chunks[1], app),
         5 => render_config_tab(f, chunks[1], app),
         _ => {}
@@ -1180,7 +1180,7 @@ pub async fn run_tui(mut alert_rx: mpsc::Receiver<Alert>, config_path: Option<Pa
     }
 
     loop {
-        terminal.draw(|f| ui(f, &app))?;
+        terminal.draw(|f| ui(f, &mut app))?;
 
         // Check for keyboard events (non-blocking)
         if event::poll(Duration::from_millis(100))? {
