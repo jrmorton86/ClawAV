@@ -9,7 +9,7 @@
 //! - **auditd**: Tails the Linux audit log for syscall-level events
 //! - **behavior**: Classifies audit events against known attack patterns
 //! - **policy**: Evaluates events against user-defined YAML policy rules
-//! - **secureclaw**: Matches commands against vendor threat pattern databases
+//! - **barnacle**: Matches commands against vendor threat pattern databases
 //! - **network/journald**: Monitors iptables/firewall log entries
 //! - **falco/samhain**: Integrates with external security tools
 //! - **sentinel**: Real-time file integrity monitoring with quarantine/restore
@@ -72,7 +72,7 @@ mod scanner;
 mod sources;
 mod forensics;
 mod seccomp;
-mod secureclaw;
+mod barnacle;
 mod slack;
 mod tui;
 mod response;
@@ -121,7 +121,7 @@ COMMANDS:
     uninstall            Reverse hardening + remove ClawTower (requires admin key)
     profile list         List available deployment profiles
     update-ioc           Update IOC bundles with signature verification
-    sync                 Update SecureClaw pattern databases
+    sync                 Update Barnacle pattern databases
     logs                 Tail the service logs (journalctl)
     help                 Show this help message
     version              Show version info
@@ -310,7 +310,7 @@ fn pre_harden_cleanup() {
         "/etc/clawtower/preload-policy.json",
         "/etc/systemd/system/clawtower.service",
         "/etc/sudoers.d/010_openclaw",
-        "/usr/local/lib/clawtower/libclawguard.so",
+        "/usr/local/lib/clawtower/libclawtower.so",
     ];
     for path in &all_paths {
         strip_immutable_flag(path);
@@ -346,7 +346,7 @@ fn run_install(force: bool) -> Result<()> {
     let dirs = [
         conf_dir.to_path_buf(),
         conf_dir.join("policies"),
-        conf_dir.join("secureclaw"),
+        conf_dir.join("barnacle"),
         conf_dir.join("sentinel-shadow"),
         conf_dir.join("quarantine"),
         PathBuf::from("/var/log/clawtower"),
@@ -548,10 +548,10 @@ async fn async_main() -> Result<()> {
             return run_script("uninstall.sh", &rest_args);
         }
         "update-ioc" => {
-            return secureclaw::run_update_ioc(&rest_args);
+            return barnacle::run_update_ioc(&rest_args);
         }
         "sync" => {
-            return run_script("sync-secureclaw.sh", &rest_args);
+            return run_script("sync-barnacle.sh", &rest_args);
         }
         "logs" => {
             let status = std::process::Command::new("journalctl")
@@ -771,11 +771,11 @@ async fn async_main() -> Result<()> {
         None
     };
 
-    // Load SecureClaw engine
-    let secureclaw_engine = if config.secureclaw.enabled {
-        match secureclaw::SecureClawEngine::load(&config.secureclaw.vendor_dir) {
+    // Load Barnacle engine
+    let barnacle_engine = if config.barnacle.enabled {
+        match barnacle::BarnacleEngine::load(&config.barnacle.vendor_dir) {
             Ok(engine) => {
-                eprintln!("SecureClaw loaded: {} injection, {} command, {} privacy, {} supply-chain patterns",
+                eprintln!("Barnacle loaded: {} injection, {} command, {} privacy, {} supply-chain patterns",
                     engine.injection_patterns.len(),
                     engine.dangerous_commands.len(),
                     engine.privacy_rules.len(),
@@ -783,7 +783,7 @@ async fn async_main() -> Result<()> {
                 Some(Arc::new(engine))
             }
             Err(e) => {
-                eprintln!("SecureClaw load error: {} (continuing without)", e);
+                eprintln!("Barnacle load error: {} (continuing without)", e);
                 None
             }
         }
@@ -797,7 +797,7 @@ async fn async_main() -> Result<()> {
         let path = PathBuf::from(&config.auditd.log_path);
         let watched = config.general.effective_watched_users();
         let pe = policy_engine.clone();
-        let se = secureclaw_engine.clone();
+        let se = barnacle_engine.clone();
         let np = if config.netpolicy.enabled {
             eprintln!("Network policy enabled (mode: {}, {} allowed hosts, {} blocked hosts)",
                 config.netpolicy.mode,
@@ -978,16 +978,32 @@ async fn async_main() -> Result<()> {
         None
     };
 
+    // Create shared scan results store (shared between scanner and API)
+    let scan_store = scanner::new_shared_scan_results();
+
     // Spawn API server if enabled (after pending_store and response_tx are ready)
     if config.api.enabled {
-        let store = alert_store.clone();
+        let audit_chain_path = if unsafe { libc::getuid() } == 0 {
+            PathBuf::from("/var/log/clawtower/audit.chain")
+        } else {
+            PathBuf::from(format!("/tmp/clawtower-{}/audit.chain", unsafe { libc::getuid() }))
+        };
+        let ctx = std::sync::Arc::new(api::ApiContext {
+            store: alert_store.clone(),
+            start_time: std::time::Instant::now(),
+            auth_token: config.api.auth_token.clone(),
+            pending_store: pending_store.clone(),
+            response_tx: response_tx.clone().map(std::sync::Arc::new),
+            scan_results: Some(scan_store.clone()),
+            audit_chain_path: Some(audit_chain_path),
+            policy_dir: Some(PathBuf::from(&config.policy.dir)),
+            barnacle_dir: Some(PathBuf::from(&config.barnacle.vendor_dir)),
+            active_profile: profile_name.clone(),
+        });
         let bind = config.api.bind.clone();
         let port = config.api.port;
-        let auth_token = config.api.auth_token.clone();
-        let api_pending = pending_store.clone();
-        let api_resp_tx = response_tx.clone();
         tokio::spawn(async move {
-            if let Err(e) = api::run_api_server(&bind, port, store, auth_token, api_pending, api_resp_tx).await {
+            if let Err(e) = api::run_api_server_with_context(&bind, port, ctx).await {
                 eprintln!("API server error: {}", e);
             }
         });
@@ -1061,10 +1077,10 @@ async fn async_main() -> Result<()> {
         }
     });
 
-    // Spawn periodic security scanner
+    // Spawn periodic security scanner (uses hoisted scan_store shared with API)
     {
         let tx = raw_tx.clone();
-        let scan_store = scanner::new_shared_scan_results();
+        let scan_store = scan_store.clone();
         let interval = config.scans.interval;
         let oc_cfg = config.openclaw.clone();
         tokio::spawn(async move {
@@ -1085,18 +1101,20 @@ async fn async_main() -> Result<()> {
     if config.sentinel.enabled {
         let sentinel_config = config.sentinel.clone();
         let sentinel_tx = raw_tx.clone();
-        let secureclaw_engine = crate::secureclaw::SecureClawEngine::load(
-            std::path::Path::new("/etc/clawtower/secureclaw")
+        let barnacle_engine = crate::barnacle::BarnacleEngine::load(
+            std::path::Path::new("/etc/clawtower/barnacle")
         ).ok().map(std::sync::Arc::new);
         
         tokio::spawn(async move {
-            match crate::sentinel::Sentinel::new(sentinel_config, sentinel_tx, secureclaw_engine) {
+            eprintln!("[sentinel] Starting sentinel with {} watch paths", sentinel_config.watch_paths.len());
+            match crate::sentinel::Sentinel::new(sentinel_config, sentinel_tx, barnacle_engine) {
                 Ok(sentinel) => {
+                    eprintln!("[sentinel] Initialized OK, entering run loop");
                     if let Err(e) = sentinel.run().await {
-                        eprintln!("Sentinel error: {}", e);
+                        eprintln!("[sentinel] Sentinel error: {}", e);
                     }
                 }
-                Err(e) => eprintln!("Failed to start sentinel: {}", e),
+                Err(e) => eprintln!("[sentinel] Failed to start sentinel: {}", e),
             }
         });
     }
