@@ -165,6 +165,52 @@ pub struct ApiContext {
     pub active_profile: Option<String>,
 }
 
+#[derive(Serialize)]
+struct EvidenceBundle {
+    generated_at: String,
+    clawtower_version: &'static str,
+    compliance_report: crate::compliance::ComplianceReport,
+    scanner_snapshot: Vec<ScannerSnapshotEntry>,
+    audit_chain_proof: AuditChainProof,
+    policy_versions: PolicyVersions,
+}
+
+#[derive(Serialize)]
+struct ScannerSnapshotEntry {
+    category: String,
+    status: String,
+    details: String,
+    timestamp: String,
+}
+
+#[derive(Serialize)]
+struct AuditChainProof {
+    chain_file: Option<String>,
+    total_entries: Option<u64>,
+    integrity_verified: bool,
+    verification_error: Option<String>,
+}
+
+#[derive(Serialize)]
+struct PolicyVersions {
+    policies: Vec<serde_json::Value>,
+    ioc_databases: Vec<serde_json::Value>,
+    active_profile: Option<String>,
+}
+
+fn parse_query_params(uri: &hyper::Uri) -> std::collections::HashMap<String, String> {
+    uri.query()
+        .map(|q| {
+            q.split('&')
+                .filter_map(|pair| {
+                    let mut parts = pair.splitn(2, '=');
+                    Some((parts.next()?.to_string(), parts.next().unwrap_or("").to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 async fn handle(
     req: Request<Body>,
     ctx: Arc<ApiContext>,
@@ -196,6 +242,7 @@ async fn handle(
 <li><a href="/api/alerts">/api/alerts</a> — Recent alerts</li>
 <li><a href="/api/security">/api/security</a> — Security posture</li>
 <li><a href="/api/pending">/api/pending</a> — Pending approval actions</li>
+<li><a href="/api/evidence">/api/evidence</a> — Enterprise evidence bundle</li>
 </ul></body></html>"#;
             Response::builder()
                 .header("Content-Type", "text/html")
@@ -318,6 +365,101 @@ async fn handle(
             } else {
                 json_response(StatusCode::SERVICE_UNAVAILABLE, r#"{"error":"response engine not enabled"}"#.to_string())
             }
+        }
+        path if path.starts_with("/api/evidence") => {
+            let params = parse_query_params(req.uri());
+            let framework = params.get("framework").map(|s| s.as_str()).unwrap_or("soc2");
+            let period: u32 = params.get("period").and_then(|s| s.parse().ok()).unwrap_or(30);
+
+            // Build alert summary from store
+            let alert_summary: Vec<(String, String, u64)> = {
+                let store = ctx.store.lock().await;
+                let mut counts: std::collections::HashMap<(String, String), u64> = std::collections::HashMap::new();
+                for alert in store.last_n(store.len()) {
+                    *counts.entry((alert.source.clone(), alert.severity.to_string())).or_insert(0) += 1;
+                }
+                counts.into_iter().map(|((s, sev), c)| (s, sev, c)).collect()
+            };
+
+            // Build scanner snapshot
+            let scanner_snapshot: Vec<ScannerSnapshotEntry> = if let Some(ref sr) = ctx.scan_results {
+                let results = sr.lock().await;
+                results.iter().map(|r| ScannerSnapshotEntry {
+                    category: r.category.clone(),
+                    status: format!("{:?}", r.status),
+                    details: r.details.clone(),
+                    timestamp: r.timestamp.to_rfc3339(),
+                }).collect()
+            } else {
+                vec![]
+            };
+
+            let scanner_tuples: Vec<(String, String)> = scanner_snapshot.iter()
+                .map(|s| (s.category.clone(), s.status.to_lowercase()))
+                .collect();
+
+            // Generate compliance report
+            let report = crate::compliance::generate_report(framework, period, &alert_summary, &scanner_tuples);
+
+            // Verify audit chain
+            let audit_proof = if let Some(ref path) = ctx.audit_chain_path {
+                match crate::audit_chain::AuditChain::verify(path) {
+                    Ok(count) => AuditChainProof {
+                        chain_file: Some(path.display().to_string()),
+                        total_entries: Some(count),
+                        integrity_verified: true,
+                        verification_error: None,
+                    },
+                    Err(e) => AuditChainProof {
+                        chain_file: Some(path.display().to_string()),
+                        total_entries: None,
+                        integrity_verified: false,
+                        verification_error: Some(e.to_string()),
+                    },
+                }
+            } else {
+                AuditChainProof {
+                    chain_file: None,
+                    total_entries: None,
+                    integrity_verified: false,
+                    verification_error: Some("Audit chain path not configured".to_string()),
+                }
+            };
+
+            // Policy versions (populated when policy_dir/barnacle_dir are wired)
+            let mut policies = vec![];
+            if let Some(ref dir) = ctx.policy_dir {
+                if let Ok(engine) = crate::policy::PolicyEngine::load(dir) {
+                    for fi in engine.file_info() {
+                        policies.push(serde_json::to_value(fi).unwrap_or_default());
+                    }
+                }
+            }
+            let mut ioc_databases = vec![];
+            if let Some(ref dir) = ctx.barnacle_dir {
+                if let Ok(engine) = crate::barnacle::BarnacleEngine::load(dir) {
+                    for di in engine.db_info() {
+                        ioc_databases.push(serde_json::to_value(di).unwrap_or_default());
+                    }
+                }
+            }
+
+            let policy_versions = PolicyVersions {
+                policies,
+                ioc_databases,
+                active_profile: ctx.active_profile.clone(),
+            };
+
+            let bundle = EvidenceBundle {
+                generated_at: chrono::Local::now().to_rfc3339(),
+                clawtower_version: env!("CARGO_PKG_VERSION"),
+                compliance_report: report,
+                scanner_snapshot,
+                audit_chain_proof: audit_proof,
+                policy_versions,
+            };
+
+            json_response(StatusCode::OK, serde_json::to_string(&bundle).unwrap())
         }
         _ => {
             let err = ErrorResponse {
@@ -561,5 +703,49 @@ mod tests {
     fn test_api_context_construction() {
         let ctx = test_ctx("test");
         assert_eq!(ctx.auth_token, "test");
+    }
+
+    #[tokio::test]
+    async fn test_evidence_endpoint_returns_200() {
+        let ctx = test_ctx("");
+        let req = Request::builder()
+            .uri("/api/evidence")
+            .body(Body::empty())
+            .unwrap();
+        let resp = handle(req, ctx).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json.get("compliance_report").is_some());
+        assert!(json.get("scanner_snapshot").is_some());
+        assert!(json.get("audit_chain_proof").is_some());
+        assert!(json.get("policy_versions").is_some());
+        assert!(json.get("clawtower_version").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_evidence_endpoint_accepts_framework_param() {
+        let ctx = test_ctx("");
+        let req = Request::builder()
+            .uri("/api/evidence?framework=mitre-attack&period=7")
+            .body(Body::empty())
+            .unwrap();
+        let resp = handle(req, ctx).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["compliance_report"]["framework"], "mitre-attack");
+        assert_eq!(json["compliance_report"]["period_days"], 7);
+    }
+
+    #[tokio::test]
+    async fn test_evidence_endpoint_requires_auth() {
+        let ctx = test_ctx("secret");
+        let req = Request::builder()
+            .uri("/api/evidence")
+            .body(Body::empty())
+            .unwrap();
+        let resp = handle(req, ctx).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 }
