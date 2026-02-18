@@ -33,16 +33,16 @@ Add `mitre_attack: &'static [&'static str]` to `ControlMapping`. Add `MITRE_ATTA
 | `behavior:container_escape` | T1611 | Privilege Escalation |
 | `scan:suid_binaries` | T1548.001 | Privilege Escalation |
 | `behavior:social_engineering` | T1204, T1566 | Initial Access |
-| `secureclaw:supply_chain` | T1195 | Initial Access |
+| `barnacle:supply_chain` | T1195 | Initial Access |
 | `sentinel:skill_intake` | T1195.002 | Initial Access |
 
 `generate_report("mitre-attack", ...)` produces reports with technique IDs as "controls" grouped by tactic.
 
-### Policy Version Tracking (policy.rs, secureclaw.rs)
+### Policy Version Tracking (policy.rs, barnacle.rs)
 
 **PolicyEngine:** Add `loaded_files: Vec<PolicyFileInfo>` populated during `load()`. `PolicyFileInfo` = `{ filename, sha256, rules_count }`.
 
-**SecureClawEngine:** Add `db_hashes: HashMap<String, String>` populated during `load()`. Method `db_info()` returns `Vec<IocDbInfo>` with `{ filename, version, sha256 }`.
+**BarnacleDefenseEngine:** Add `db_hashes: HashMap<String, String>` populated during `load()`. Method `db_info()` returns `Vec<IocDbInfo>` with `{ filename, version, sha256 }`.
 
 ### Evidence Bundle API (api.rs, main.rs)
 

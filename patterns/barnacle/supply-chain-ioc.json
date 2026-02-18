@@ -1,0 +1,31 @@
+{
+  "version": "1.0.0",
+  "description": "BarnacleDefense supply chain IOC database — malicious skill and C2 indicators",
+  "suspicious_skill_patterns": [
+    "(?i)\\beval\\s*\\(.*\\b(fetch|http|XMLHttpRequest)\\b",
+    "(?i)\\bimport\\s+(?:subprocess|socket|ctypes|pty)\\b",
+    "(?i)\\brequire\\s*\\(\\s*['\"]child_process['\"]\\s*\\)",
+    "(?i)\\bprocess\\.env\\b.*\\b(password|secret|token|key)\\b",
+    "(?i)\\bfs\\.(?:readFile|writeFile)Sync\\b.*(?:/etc/|/root/|\\.ssh/)",
+    "(?i)\\bexfiltrate\\b",
+    "(?i)\\bkeylog(?:ger)?\\b",
+    "(?i)\\bbackdoor\\b",
+    "(?i)\\breverse.?shell\\b",
+    "(?i)\\bcrypto.?min(?:er|ing)\\b",
+    "(?i)\\bbitcoin.*(?:address|wallet)\\b.*(?:replace|swap|redirect)",
+    "(?i)\\bsteganograph(?:y|ic)\\b"
+  ],
+  "clawhavoc": {
+    "name_patterns": [
+      "(?i)clawhavoc",
+      "(?i)claw[_-]?havoc",
+      "(?i)havoc[_-]?agent",
+      "(?i)red[_-]?lobster[_-]?c2"
+    ],
+    "c2_servers": [
+      "(?i)havoc\\.(io|cc|xyz|top)",
+      "(?i)c2\\.clawhavoc",
+      "(?i)\\b(?:callback|beacon|implant)\\.(?:duckdns|ngrok|serveo)\\b"
+    ]
+  }
+}

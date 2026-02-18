@@ -36,9 +36,9 @@ port = 18791
 [scans]
 interval = 3600
 
-[secureclaw]
+[barnacle]
 enabled = false
-vendor_dir = "./vendor/secureclaw/secureclaw/skill/configs"
+vendor_dir = "/etc/clawtower/barnacle"
 
 [policy]
 enabled = true

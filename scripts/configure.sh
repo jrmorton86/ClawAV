@@ -94,9 +94,9 @@ if [[ "$API_ENABLED" == "true" ]]; then
 fi
 echo ""
 
-# ── SecureClaw ────────────────────────────────────────────────────────────────
-echo -e "${YELLOW}── SecureClaw Pattern Databases ──${NC}"
-SC_ENABLED=$(ask "Enable SecureClaw patterns? (true/false)" "true")
+# ── BarnacleDefense ───────────────────────────────────────────────────────────
+echo -e "${YELLOW}── BarnacleDefense Pattern Databases ──${NC}"
+SC_ENABLED=$(ask "Enable BarnacleDefense patterns? (true/false)" "true")
 set_toml "enabled" "$SC_ENABLED"
 echo ""
 

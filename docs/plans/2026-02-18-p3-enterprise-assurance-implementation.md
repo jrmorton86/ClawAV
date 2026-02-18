@@ -4,7 +4,7 @@
 
 **Goal:** Add MITRE ATT&CK mapping, policy version tracking, and an evidence bundle API endpoint to ClawTower's enterprise compliance infrastructure.
 
-**Architecture:** Three independent layers — (A) extend `compliance.rs` with ATT&CK technique mappings as a fourth framework column plus a rich technique metadata table, (B) add SHA-256 hash tracking to `policy.rs` and `secureclaw.rs` at load time, (C) refactor `api.rs` to use an `ApiContext` struct and add a `GET /api/evidence` endpoint that assembles compliance reports, scanner snapshots, audit chain proofs, and policy version info into one JSON bundle.
+**Architecture:** Three independent layers — (A) extend `compliance.rs` with ATT&CK technique mappings as a fourth framework column plus a rich technique metadata table, (B) add SHA-256 hash tracking to `policy.rs` and `barnacle.rs` at load time, (C) refactor `api.rs` to use an `ApiContext` struct and add a `GET /api/evidence` endpoint that assembles compliance reports, scanner snapshots, audit chain proofs, and policy version info into one JSON bundle.
 
 **Tech Stack:** Rust, existing crates (sha2, serde, serde_json, hyper, chrono, tokio)
 
@@ -115,7 +115,7 @@ fn test_mitre_technique_lookup_unknown() {
 fn test_supply_chain_categories_have_mappings() {
     // New P2 categories added to CONTROL_MAPPINGS
     assert!(lookup_controls("behavior:social_engineering").is_some());
-    assert!(lookup_controls("secureclaw:supply_chain").is_some());
+    assert!(lookup_controls("barnacle:supply_chain").is_some());
     assert!(lookup_controls("sentinel:skill_intake").is_some());
 }
 ```
@@ -179,7 +179,7 @@ ControlMapping {
     mitre_attack: &["T1204", "T1566"],
 },
 ControlMapping {
-    clawtower_category: "secureclaw:supply_chain",
+    clawtower_category: "barnacle:supply_chain",
     soc2_controls: &["CC6.8", "CC8.1"],
     nist_controls: &["SI-3", "SI-7"],
     cis_controls: &["2.7", "16.1"],
@@ -314,7 +314,7 @@ git commit -m "feat(compliance): add mitre-attack as supported report framework"
 - Modify: `src/policy.rs:85-190` (PolicyEngine struct + load method)
 
 **Context:**
-`PolicyEngine` (line 85) is `struct PolicyEngine { rules: Vec<PolicyRule> }`. The `load()` method (line 129) reads each YAML file as a string, parses it, and merges rules. We need to hash the raw bytes before parsing and store file metadata. The SHA-256 crate `sha2` is already a dependency (used in audit_chain.rs, secureclaw.rs).
+`PolicyEngine` (line 85) is `struct PolicyEngine { rules: Vec<PolicyRule> }`. The `load()` method (line 129) reads each YAML file as a string, parses it, and merges rules. We need to hash the raw bytes before parsing and store file metadata. The SHA-256 crate `sha2` is already a dependency (used in audit_chain.rs, barnacle.rs).
 
 **Step 1: Write the failing tests**
 
@@ -415,14 +415,14 @@ git commit -m "feat(policy): track SHA-256 hashes and rule counts for loaded pol
 
 ---
 
-### Task 5: Add db_hashes to SecureClawEngine and db_info() method
+### Task 5: Add db_hashes to BarnacleDefenseEngine and db_info() method
 
 **Files:**
-- Modify: `src/secureclaw.rs:55-60` (SecureClawEngine struct)
-- Modify: `src/secureclaw.rs:129-183` (load method)
+- Modify: `src/barnacle.rs:55-60` (BarnacleDefenseEngine struct)
+- Modify: `src/barnacle.rs:129-183` (load method)
 
 **Context:**
-`SecureClawEngine` already has `db_versions: HashMap<String, String>` (added in P2 Task 1) populated during `load()`. We need to add parallel `db_hashes: HashMap<String, String>` tracking SHA-256 of each JSON file's raw bytes, plus a `db_info()` method returning structured info. SHA-256 is already imported in secureclaw.rs (`use sha2::{Digest, Sha256}`).
+`BarnacleDefenseEngine` already has `db_versions: HashMap<String, String>` (added in P2 Task 1) populated during `load()`. We need to add parallel `db_hashes: HashMap<String, String>` tracking SHA-256 of each JSON file's raw bytes, plus a `db_info()` method returning structured info. SHA-256 is already imported in barnacle.rs (`use sha2::{Digest, Sha256}`).
 
 **Step 1: Write the failing tests**
 
@@ -432,7 +432,7 @@ fn test_engine_db_info_populated() {
     let dir = tempfile::tempdir().unwrap();
     let content = r#"{"version":"1.0.0","patterns":[]}"#;
     std::fs::write(dir.path().join("supply-chain-ioc.json"), content).unwrap();
-    let engine = SecureClawEngine::load(dir.path()).unwrap();
+    let engine = BarnacleDefenseEngine::load(dir.path()).unwrap();
     let info = engine.db_info();
     assert!(!info.is_empty());
     let sci = info.iter().find(|i| i.filename == "supply-chain-ioc.json").unwrap();
@@ -444,7 +444,7 @@ fn test_engine_db_info_populated() {
 **Step 2: Run test to verify it fails**
 
 Run: `~/.cargo/bin/cargo test test_engine_db_info -- --nocapture`
-Expected: FAIL — no method `db_info` on `SecureClawEngine`
+Expected: FAIL — no method `db_info` on `BarnacleDefenseEngine`
 
 **Step 3: Implement**
 
@@ -458,7 +458,7 @@ pub struct IocDbInfo {
 }
 ```
 
-2. Add field to `SecureClawEngine`:
+2. Add field to `BarnacleDefenseEngine`:
 ```rust
 db_hashes: HashMap<String, String>,
 ```
@@ -489,14 +489,14 @@ pub fn db_info(&self) -> Vec<IocDbInfo> {
 
 **Step 4: Run tests**
 
-Run: `~/.cargo/bin/cargo test secureclaw -- --nocapture`
-Expected: All secureclaw tests PASS
+Run: `~/.cargo/bin/cargo test barnacle -- --nocapture`
+Expected: All barnacle tests PASS
 
 **Step 5: Commit**
 
 ```bash
-git add src/secureclaw.rs
-git commit -m "feat(secureclaw): track SHA-256 hashes for IOC database files"
+git add src/barnacle.rs
+git commit -m "feat(barnacle): track SHA-256 hashes for IOC database files"
 ```
 
 ---
@@ -529,7 +529,7 @@ fn test_api_context_construction() {
         scan_results: None,
         audit_chain_path: None,
         policy_dir: None,
-        secureclaw_dir: None,
+        barnacle_dir: None,
         active_profile: None,
     };
     assert_eq!(ctx.auth_token, "test");
@@ -558,7 +558,7 @@ pub struct ApiContext {
     pub scan_results: Option<SharedScanResults>,
     pub audit_chain_path: Option<PathBuf>,
     pub policy_dir: Option<PathBuf>,
-    pub secureclaw_dir: Option<PathBuf>,
+    pub barnacle_dir: Option<PathBuf>,
     pub active_profile: Option<String>,
 }
 ```
@@ -595,7 +595,7 @@ pub async fn run_api_server(
         scan_results: None,
         audit_chain_path: None,
         policy_dir: None,
-        secureclaw_dir: None,
+        barnacle_dir: None,
         active_profile: None,
     });
 
@@ -645,7 +645,7 @@ fn test_ctx(auth_token: &str) -> Arc<ApiContext> {
         scan_results: None,
         audit_chain_path: None,
         policy_dir: None,
-        secureclaw_dir: None,
+        barnacle_dir: None,
         active_profile: None,
     })
 }
@@ -678,7 +678,7 @@ fn test_ctx_with_store(auth_token: &str, store: SharedAlertStore) -> Arc<ApiCont
         scan_results: None,
         audit_chain_path: None,
         policy_dir: None,
-        secureclaw_dir: None,
+        barnacle_dir: None,
         active_profile: None,
     })
 }
@@ -704,7 +704,7 @@ git commit -m "refactor(api): extract ApiContext struct to consolidate handler p
 - Modify: `src/api.rs` (new match arm in handle(), new response types)
 
 **Context:**
-With `ApiContext` in place, the evidence endpoint reads from `ctx.scan_results`, `ctx.audit_chain_path`, `ctx.policy_dir`, and `ctx.secureclaw_dir`. It calls `compliance::generate_report()`, `AuditChain::verify()`, and assembles everything into a single JSON response.
+With `ApiContext` in place, the evidence endpoint reads from `ctx.scan_results`, `ctx.audit_chain_path`, `ctx.policy_dir`, and `ctx.barnacle_dir`. It calls `compliance::generate_report()`, `AuditChain::verify()`, and assembles everything into a single JSON response.
 
 **Step 1: Write the failing tests**
 
@@ -958,7 +958,7 @@ if config.api.enabled {
         scan_results: Some(scan_store.clone()),
         audit_chain_path: Some(PathBuf::from(&config.general.audit_chain_path)),
         policy_dir: Some(PathBuf::from(&config.policy.policy_dir)),
-        secureclaw_dir: Some(PathBuf::from(&config.secureclaw.config_dir)),
+        barnacle_dir: Some(PathBuf::from(&config.barnacle.config_dir)),
         active_profile: profile_name.clone(),
     });
     let bind = config.api.bind.clone();
@@ -975,7 +975,7 @@ if config.api.enabled {
 
 5. Check that `config.policy.policy_dir` exists. If it's `config.policy.dirs` (a Vec), use the first entry or a sensible default.
 
-6. Check that `config.secureclaw.config_dir` exists. If it's named differently (e.g., `vendor_dir`), use the correct field name.
+6. Check that `config.barnacle.config_dir` exists. If it's named differently (e.g., `vendor_dir`), use the correct field name.
 
 **Step 3: Run full test suite**
 
@@ -1005,9 +1005,9 @@ After all tasks complete:
 3. **Key behaviors to verify**:
    - `generate_report("mitre-attack", ...)` produces a report with ATT&CK technique IDs as findings
    - `lookup_mitre_technique("T1048")` returns correct technique metadata
-   - Supply-chain categories (`behavior:social_engineering`, `secureclaw:supply_chain`, `sentinel:skill_intake`) have control mappings
+   - Supply-chain categories (`behavior:social_engineering`, `barnacle:supply_chain`, `sentinel:skill_intake`) have control mappings
    - `PolicyEngine::load()` populates `file_info()` with filenames, SHA-256 hashes, and rule counts
-   - `SecureClawEngine::load()` populates `db_info()` with filenames, versions, and SHA-256 hashes
+   - `BarnacleDefenseEngine::load()` populates `db_info()` with filenames, versions, and SHA-256 hashes
    - `GET /api/evidence` returns a JSON bundle with compliance report, scanner snapshot, audit chain proof, and policy versions
    - Evidence endpoint respects bearer auth when configured
    - Evidence endpoint accepts `?framework=mitre-attack&period=7` parameters

@@ -1,6 +1,6 @@
 # Sentinel: Real-Time File Integrity Monitor
 
-ClawTower's **Sentinel** is a real-time file watcher built on Linux inotify. It detects changes to critical files the instant they happen, generates diffs against shadow copies, scans content for threats via SecureClaw, and either quarantines+restores (protected files) or updates its baseline (watched files).
+ClawTower's **Sentinel** is a real-time file watcher built on Linux inotify. It detects changes to critical files the instant they happen, generates diffs against shadow copies, scans content for threats via BarnacleDefense, and either quarantines+restores (protected files) or updates its baseline (watched files).
 
 ---
 
@@ -13,7 +13,7 @@ ClawTower's **Sentinel** is a real-time file watcher built on Linux inotify. It 
 5. [Protected vs Watched Policies](#protected-vs-watched-policies)
 6. [Shadow Copies](#shadow-copies)
 7. [Quarantine](#quarantine)
-8. [SecureClaw Integration](#secureclaw-integration)
+8. [BarnacleDefense Integration](#barnacle-integration)
 9. [Content Scan Exclusions](#content-scan-exclusions)
 10. [Scan Deduplication](#scan-deduplication)
 11. [Log Rotation Detection](#log-rotation-detection)
@@ -31,7 +31,7 @@ Key capabilities:
 
 - **Instant detection** — inotify kernel events, not polling
 - **Automatic quarantine & restore** — protected files are reverted immediately on unauthorized change
-- **Content scanning** — new content is checked against SecureClaw pattern databases for injection attacks
+- **Content scanning** — new content is checked against BarnacleDefense pattern databases for injection attacks
 - **Diff generation** — unified diffs show exactly what changed
 - **Debounced processing** — rapid writes (e.g., editors doing save-tmp-rename) are coalesced into a single event
 
@@ -66,7 +66,7 @@ Content identical?  ──yes──▶ ignore
 Generate unified diff (old vs new)
     │
     ▼
-SecureClaw content scan (if enabled)
+BarnacleDefense content scan (if enabled)
     │
     ├── Threat found ──▶ QUARANTINE current → RESTORE from shadow → Critical alert
     │
@@ -89,7 +89,7 @@ SecureClaw content scan (if enabled)
 
 6. **Diff generation** — the shadow copy (previous known-good content) is compared line-by-line with the current content, producing a unified diff.
 
-7. **SecureClaw scan** — if `scan_content = true` and a `SecureClawEngine` is loaded, both the full file content and the diff are checked against threat pattern databases.
+7. **BarnacleDefense scan** — if `scan_content = true` and a `BarnacleDefenseEngine` is loaded, both the full file content and the diff are checked against threat pattern databases.
 
 8. **Action** — based on policy and scan results:
    - **Quarantine + Restore**: the modified file is copied to quarantine, then the shadow copy overwrites it back to its previous state.
@@ -154,7 +154,7 @@ Each path in `watch_paths` has a **policy** that determines what happens when th
 | `protected` | Quarantine modified file, restore from shadow | **Critical** | Identity files that should never change at runtime (`SOUL.md`, `AGENTS.md`, `IDENTITY.md`) |
 | `watched` | Update shadow copy to new content | **Info** | Mutable working files that legitimately change (`HEARTBEAT.md`, `TOOLS.md`, logs, notes) |
 
-**Exception:** If `scan_content` is enabled and SecureClaw detects a threat in a *watched* file, the file is quarantined and restored **regardless of policy**. Threat detection always wins.
+**Exception:** If `scan_content` is enabled and BarnacleDefense detects a threat in a *watched* file, the file is quarantined and restored **regardless of policy**. Threat detection always wins.
 
 ### When to Use Which
 
@@ -240,9 +240,9 @@ diff /etc/clawtower/quarantine/20260214_203500_SOUL.md /home/openclaw/.openclaw/
 
 ---
 
-## SecureClaw Integration
+## BarnacleDefense Integration
 
-When `scan_content = true` (the default), the Sentinel feeds file content through SecureClaw's pattern matching engine.
+When `scan_content = true` (the default), the Sentinel feeds file content through BarnacleDefense's pattern matching engine.
 
 ### What Gets Scanned
 
@@ -261,19 +261,19 @@ Any match from either scan triggers the quarantine+restore path, regardless of w
 
 ### Pattern Databases
 
-SecureClaw uses curated pattern databases that detect:
+BarnacleDefense uses curated pattern databases that detect:
 - Prompt injection attempts
 - Identity override patterns
 - Credential/secret patterns
 - Known malicious payloads
 
-These are loaded and managed by the `SecureClawEngine` — see [SECURITY-SCANNERS.md](SECURITY-SCANNERS.md#secureclaw-pattern-engine) for details on pattern databases and management.
+These are loaded and managed by the `BarnacleDefenseEngine` — see [SECURITY-SCANNERS.md](SECURITY-SCANNERS.md#barnacle-pattern-engine) for details on pattern databases and management.
 
 ---
 
 ## Content Scan Exclusions
 
-Some watched paths contain sensitive data (API keys, auth tokens) that would trigger SecureClaw's credential-detection patterns on every change. Two config fields let you exclude paths from content scanning while still tracking changes.
+Some watched paths contain sensitive data (API keys, auth tokens) that would trigger BarnacleDefense's credential-detection patterns on every change. Two config fields let you exclude paths from content scanning while still tracking changes.
 
 ### Glob-Based Exclusions
 
@@ -301,12 +301,12 @@ exclude_content_scan = [
 
 ### What Gets Skipped
 
-Only SecureClaw content pattern matching is bypassed. Everything else still applies:
+Only BarnacleDefense content pattern matching is bypassed. Everything else still applies:
 
 - ✅ Change detection (inotify events still fire)
 - ✅ Diff generation (shadow comparison still happens)
 - ✅ Policy enforcement (protected files still quarantine+restore)
-- ❌ SecureClaw pattern scan (skipped for excluded paths)
+- ❌ BarnacleDefense pattern scan (skipped for excluded paths)
 
 This prevents false positives from files that legitimately contain credential-like strings.
 
@@ -370,7 +370,7 @@ enabled = true              # Master switch (default: true)
 shadow_dir = "/etc/clawtower/sentinel-shadow"   # Where shadow copies live
 quarantine_dir = "/etc/clawtower/quarantine"    # Where quarantined files go
 debounce_ms = 200           # Coalesce events within this window (default: 200)
-scan_content = true         # Run SecureClaw on changed content (default: true)
+scan_content = true         # Run BarnacleDefense on changed content (default: true)
 max_file_size_kb = 1024     # Skip files larger than this (default: 1024)
 
 # Protected identity files — quarantine + restore on any change
@@ -546,7 +546,7 @@ ClawTower has **two layers** of file integrity monitoring:
 | **Baseline** | Shadow file copies (full content) | SHA-256 hashes (+ shadow copies for watched files) |
 | **Protected action** | Quarantine + restore from shadow | Alert only (Critical) |
 | **Watched action** | Update shadow, Info alert | Update hash + shadow, Warn alert with diff |
-| **Content scanning** | SecureClaw patterns on every change | Hash-only comparison (SecureClaw not invoked; watched files skip content scanning to avoid false positives) |
+| **Content scanning** | BarnacleDefense patterns on every change | Hash-only comparison (BarnacleDefense not invoked; watched files skip content scanning to avoid false positives) |
 | **Config** | `[sentinel]` in config.toml | Hardcoded file lists |
 | **Shadow location** | `/etc/clawtower/sentinel-shadow/` | `/etc/clawtower/cognitive-shadow/` |
 

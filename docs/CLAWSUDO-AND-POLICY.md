@@ -297,18 +297,18 @@ Every outbound request body is scanned against configurable regex patterns:
 
 ## 6. LD_PRELOAD Guard
 
-`libclawguard.so` is a shared library that intercepts libc syscalls at the lowest level, enforcing policy before the kernel ever sees the call.
+`libclawtower.so` is a shared library that intercepts libc syscalls at the lowest level, enforcing policy before the kernel ever sees the call.
 
 ### Build
 
 ```bash
-gcc -shared -fPIC -o libclawguard.so src/preload/interpose.c -ldl
+gcc -shared -fPIC -o libclawtower.so src/preload/interpose.c -ldl
 ```
 
 ### Activation
 
 ```bash
-export LD_PRELOAD=/usr/local/lib/libclawguard.so
+export LD_PRELOAD=/usr/local/lib/libclawtower.so
 # All child processes inherit this — syscalls are intercepted
 ```
 
@@ -426,7 +426,7 @@ rules:
 
 ```
 ┌─────────────────────────────────────────────┐
-│  LD_PRELOAD guard (libclawguard.so)         │  ← Blocks at libc level
+│  LD_PRELOAD guard (libclawtower.so)         │  ← Blocks at libc level
 ├─────────────────────────────────────────────┤
 │  clawsudo (sudo proxy)                      │  ← Policy gate for privileged ops
 ├─────────────────────────────────────────────┤

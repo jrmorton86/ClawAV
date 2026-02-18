@@ -11,7 +11,7 @@
 //! - Binary/config integrity (SHA-256 checksums)
 //! - Immutable file flags (chattr +i)
 //! - AppArmor profile status
-//! - SecureClaw pattern database freshness
+//! - Barnacle pattern database freshness
 //! - Audit log health and permissions
 //! - Crontab audit, world-writable files, SUID/SGID binaries
 //! - Kernel modules, Docker security, password policy
@@ -753,7 +753,7 @@ pub fn scan_environment_variables() -> ScanResult {
 
     // Check current environment for suspicious variables
     for (key, value) in std::env::vars() {
-        if key == "LD_PRELOAD" && !value.contains("clawguard") {
+        if key == "LD_PRELOAD" && !value.contains("clawtower") {
             issues.push(format!("Suspicious LD_PRELOAD: {}", value));
         }
         if key == "LD_LIBRARY_PATH" && value.contains("/tmp") {
@@ -792,7 +792,7 @@ pub fn scan_environment_variables() -> ScanResult {
 }
 
 /// ClawTower's own LD_PRELOAD guard library path — entries matching this are benign.
-const CLAWTOWER_GUARD_PATH: &str = "/usr/local/lib/libclawguard.so";
+const CLAWTOWER_GUARD_PATH: &str = "/usr/local/lib/libclawtower.so";
 
 /// Common shell profile files to scan for LD_PRELOAD persistence.
 const PROFILE_SCAN_PATHS: &[&str] = &[
@@ -829,7 +829,7 @@ pub fn scan_ld_preload_persistence() -> ScanResult {
                 }
                 if (trimmed.contains("LD_PRELOAD=") || trimmed.contains("export LD_PRELOAD"))
                     && !trimmed.contains(CLAWTOWER_GUARD_PATH)
-                    && !trimmed.contains("clawguard")
+                    && !trimmed.contains("clawtower")
                     && !trimmed.contains("clawtower")
                 {
                     issues.push(format!(
@@ -896,7 +896,7 @@ pub fn scan_ld_preload_persistence() -> ScanResult {
             let trimmed = line.trim();
             if !trimmed.is_empty() && !trimmed.starts_with('#')
                 && !trimmed.contains(CLAWTOWER_GUARD_PATH)
-                && !trimmed.contains("clawguard")
+                && !trimmed.contains("clawtower")
                 && !trimmed.contains("clawtower")
             {
                 issues.push(format!("/etc/ld.so.preload: {}", trimmed));
@@ -1951,27 +1951,27 @@ pub fn scan_apparmor_protection() -> ScanResult {
     }
 }
 
-/// Check the age of the SecureClaw vendor pattern database via its git log.
-pub fn scan_secureclaw_sync() -> ScanResult {
+/// Check the age of the Barnacle vendor pattern database via its git log.
+pub fn scan_barnacle_sync() -> ScanResult {
     // Try configured path first, then common locations
     let agent_home = detect_agent_home();
     let mut candidates = vec![
-        format!("{}/.openclaw/workspace/openclawtower/vendor/secureclaw", agent_home),
-        "vendor/secureclaw".to_string(),
-        "/opt/clawtower/vendor/secureclaw".to_string(),
+        format!("{}/.openclaw/workspace/openclawtower/vendor/barnacle", agent_home),
+        "vendor/barnacle".to_string(),
+        "/opt/clawtower/vendor/barnacle".to_string(),
     ];
     if let Ok(cwd) = std::env::current_dir() {
-        candidates.push(cwd.join("vendor/secureclaw").display().to_string());
+        candidates.push(cwd.join("vendor/barnacle").display().to_string());
     }
     let vendor_path = candidates.iter()
         .find(|p| std::path::Path::new(p).exists())
         .map(String::as_str)
-        .unwrap_or("vendor/secureclaw");
+        .unwrap_or("vendor/barnacle");
     
     if !std::path::Path::new(vendor_path).exists() {
-        // Not a failure — SecureClaw patterns are loaded at runtime from vendor dir.
+        // Not a failure — Barnacle patterns are loaded at runtime from vendor dir.
         // When installed via oneshot script (no git repo), this is expected.
-        return ScanResult::new("secureclaw", ScanStatus::Pass, "SecureClaw vendor dir not present (patterns loaded from embedded defaults if available)");
+        return ScanResult::new("barnacle", ScanStatus::Pass, "Barnacle vendor dir not present (patterns loaded from embedded defaults if available)");
     }
 
     // Check how old the last update is
@@ -1988,26 +1988,26 @@ pub fn scan_secureclaw_sync() -> ScanResult {
                     if let Some(days_str) = age_str.split_whitespace().next() {
                         if let Ok(days) = days_str.parse::<u32>() {
                             if days > 7 {
-                                return ScanResult::new("secureclaw", ScanStatus::Warn, 
-                                    &format!("SecureClaw patterns are {} old - consider running sync script", age_str));
+                                return ScanResult::new("barnacle", ScanStatus::Warn, 
+                                    &format!("Barnacle patterns are {} old - consider running sync script", age_str));
                             }
                         }
                     }
                 }
                 
-                ScanResult::new("secureclaw", ScanStatus::Pass, 
-                    &format!("SecureClaw patterns up to date ({})", age_str))
+                ScanResult::new("barnacle", ScanStatus::Pass, 
+                    &format!("Barnacle patterns up to date ({})", age_str))
             } else if age_str.contains("week") || age_str.contains("month") || age_str.contains("year") {
-                ScanResult::new("secureclaw", ScanStatus::Warn, 
-                    &format!("SecureClaw patterns are {} old - run scripts/sync-secureclaw.sh", age_str))
+                ScanResult::new("barnacle", ScanStatus::Warn, 
+                    &format!("Barnacle patterns are {} old - run scripts/sync-barnacle.sh", age_str))
             } else {
-                ScanResult::new("secureclaw", ScanStatus::Warn, 
-                    &format!("SecureClaw last updated: {}", age_str))
+                ScanResult::new("barnacle", ScanStatus::Warn, 
+                    &format!("Barnacle last updated: {}", age_str))
             }
         }
         Err(e) => {
-            ScanResult::new("secureclaw", ScanStatus::Fail, 
-                &format!("Cannot check SecureClaw status: {}", e))
+            ScanResult::new("barnacle", ScanStatus::Fail, 
+                &format!("Cannot check Barnacle status: {}", e))
         }
     }
 }
@@ -2016,7 +2016,7 @@ impl SecurityScanner {
     /// Execute all 30+ security checks and return the results.
     ///
     /// Includes firewall, auditd, integrity, updates, SSH, listening services,
-    /// resources, side-channel mitigations, immutable flags, AppArmor, SecureClaw,
+    /// resources, side-channel mitigations, immutable flags, AppArmor, Barnacle,
     /// audit log health, crontab, world-writable files, SUID/SGID, kernel modules,
     /// Docker, password policy, open FDs, DNS, NTP, failed logins, zombie processes,
     /// swap/tmpfs, environment variables, packages, core dumps, network interfaces,
@@ -2035,7 +2035,7 @@ impl SecurityScanner {
             scan_sidechannel_mitigations(),
             scan_immutable_flags(),
             scan_apparmor_protection(),
-            scan_secureclaw_sync(),
+            scan_barnacle_sync(),
             crate::logtamper::scan_audit_log_health(std::path::Path::new("/var/log/audit/audit.log")),
             // New expanded security checks
             scan_crontab_audit(),
@@ -2068,14 +2068,14 @@ impl SecurityScanner {
         results.extend(scan_user_persistence());
 
         // Cognitive file integrity (returns Vec)
-        // Load SecureClaw engine for cognitive content scanning
-        let secureclaw_engine = crate::secureclaw::SecureClawEngine::load(
-            std::path::Path::new("/etc/clawtower/secureclaw")
+        // Load Barnacle engine for cognitive content scanning
+        let barnacle_engine = crate::barnacle::BarnacleEngine::load(
+            std::path::Path::new("/etc/clawtower/barnacle")
         ).ok();
         results.extend(scan_cognitive_integrity(
             std::path::Path::new(&workspace_path),
             std::path::Path::new("/etc/clawtower/cognitive-baselines.sha256"),
-            secureclaw_engine.as_ref(),
+            barnacle_engine.as_ref(),
         ));
         // OpenClaw-specific security checks
         results.extend(scan_openclaw_security());
@@ -3340,17 +3340,17 @@ rules 0
 
     #[test]
     fn test_env_ld_preload_suspicious_detected() {
-        // Simulate: if LD_PRELOAD is set to something non-clawguard, scan_environment_variables flags it
+        // Simulate: if LD_PRELOAD is set to something non-clawtower, scan_environment_variables flags it
         // We test the logic directly: the scan checks env::vars() which we can't mock easily,
         // but we can verify the pattern matching logic
         let value = "/tmp/evil.so";
-        assert!(!value.contains("clawguard"));
+        assert!(!value.contains("clawtower"));
     }
 
     #[test]
-    fn test_env_ld_preload_clawguard_allowed() {
-        let value = "/usr/lib/clawguard.so";
-        assert!(value.contains("clawguard"));
+    fn test_env_ld_preload_clawtower_allowed() {
+        let value = "/usr/lib/clawtower.so";
+        assert!(value.contains("clawtower"));
     }
 
     #[test]
@@ -3913,12 +3913,12 @@ rules 0
 
     #[test]
     fn test_ld_preload_allowlist_clawtower_guard() {
-        // Verify the allowlist logic: lines containing clawguard/clawtower should be skipped
-        let line = "LD_PRELOAD=/usr/local/lib/libclawguard.so";
+        // Verify the allowlist logic: lines containing clawtower/clawtower should be skipped
+        let line = "LD_PRELOAD=/usr/local/lib/libclawtower.so";
         let trimmed = line.trim();
         assert!(
             trimmed.contains(CLAWTOWER_GUARD_PATH)
-                || trimmed.contains("clawguard")
+                || trimmed.contains("clawtower")
                 || trimmed.contains("clawtower"),
             "ClawTower guard path should match allowlist"
         );

@@ -1,5 +1,5 @@
 /target
-libclawguard.so
+libclawtower.so
 target/
 admin.key.hash
 .worktrees/
@@ -7,5 +7,5 @@ release-signing-key.private
 ClawTower-keyboard/
 scripts/deploy.sh
 scripts/pentest.sh
-libclawguard*.so
+libclawtower*.so
 test_interpose

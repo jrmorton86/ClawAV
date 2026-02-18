@@ -24,12 +24,12 @@ In `src/behavior.rs`, add `FinancialTheft` after `SideChannel` (line 29):
 ```rust
     SideChannel,
     FinancialTheft,
-    SecureClawMatch,
+    BarnacleDefenseMatch,
 ```
 
 **Step 2: Add Display match arm**
 
-In the `Display` impl (line 42), add before `SecureClawMatch`:
+In the `Display` impl (line 42), add before `BarnacleDefenseMatch`:
 
 ```rust
             BehaviorCategory::FinancialTheft => write!(f, "FIN_THEFT"),
@@ -335,7 +335,7 @@ In `src/config.rs`, `fn default_watch_paths()`, add:
 
 **Step 2: Add injection marker detection in sentinel**
 
-In `src/sentinel.rs`, find the content scanning section (where SecureClaw patterns are applied to file diffs). Add an additional check for common injection markers. Look for where `secureclaw_engine` is used in content scanning, and after that block add:
+In `src/sentinel.rs`, find the content scanning section (where BarnacleDefense patterns are applied to file diffs). Add an additional check for common injection markers. Look for where `barnacle_engine` is used in content scanning, and after that block add:
 
 ```rust
 /// Prompt injection markers — strings that indicate embedded instructions in files
@@ -376,7 +376,7 @@ pub fn check_injection_markers(content: &str) -> Option<&'static str> {
 }
 ```
 
-Then in the content scanning path (where file diffs are checked), after the existing SecureClaw check, add:
+Then in the content scanning path (where file diffs are checked), after the existing BarnacleDefense check, add:
 
 ```rust
     // Check for prompt injection markers in file content

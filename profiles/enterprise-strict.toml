@@ -29,7 +29,7 @@ enabled = true
 [policy]
 enabled = true
 
-[secureclaw]
+[barnacle]
 enabled = true
 
 [incident_mode]

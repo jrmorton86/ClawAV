@@ -109,7 +109,7 @@ Replace with:
                 field_type: FieldType::Enum(vec!["true".into(), "false".into()]),
 ```
 
-There are approximately 10-12 instances across general, slack, auditd, network, falco, samhain, api, proxy, policy, secureclaw, netpolicy sections.
+There are approximately 10-12 instances across general, slack, auditd, network, falco, samhain, api, proxy, policy, barnacle, netpolicy sections.
 
 **Step 2: Change min_alert_level and min_slack_level to Enum**
 

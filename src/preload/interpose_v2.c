@@ -1,5 +1,5 @@
 /*
- * libclawguard.so v2 — Predictive Behavioral LD_PRELOAD Engine
+ * libclawtower.so v2 — Predictive Behavioral LD_PRELOAD Engine
  *
  * Replaces the static deny-list approach with:
  *   - Ring buffer behavioral tracking
@@ -11,7 +11,7 @@
  *   - Shared memory event bus to sentinel
  *   - Hot-reload policy via shared memory version flag
  *
- * Build: gcc -shared -fPIC -o libclawguard.so src/preload/interpose_v2.c -ldl -lpthread -lm
+ * Build: gcc -shared -fPIC -o libclawtower.so src/preload/interpose_v2.c -ldl -lpthread -lm
  * No heap allocation. All static buffers.
  *
  * (c) 2026 ClawTower / ClawTower
@@ -105,7 +105,7 @@
 #define CMD_RELOAD_POLICY   3
 #define CMD_FORCE_THREAT    4
 
-#define SHM_NAME "/clawguard_shm"
+#define SHM_NAME "/clawtower_shm"
 #define SHM_MAGIC 0x434C4157  /* "CLAW" */
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -158,12 +158,12 @@ typedef struct {
     uint32_t magic;
     uint32_t version;
 
-    /* libclawguard → sentinel */
+    /* libclawtower → sentinel */
     syscall_event_t event_queue[SHM_EVENT_QUEUE_SIZE];
     _Atomic uint32_t event_head;
     _Atomic uint32_t event_tail;
 
-    /* sentinel → libclawguard */
+    /* sentinel → libclawtower */
     _Atomic uint32_t command;
     _Atomic uint32_t policy_version;
     _Atomic uint16_t forced_threat_level;
@@ -1165,7 +1165,7 @@ int socket(int domain, int type, int protocol) {
  * ══════════════════════════════════════════════════════════════════════════ */
 
 __attribute__((constructor))
-static void clawguard_v2_init(void) {
+static void clawtower_v2_init(void) {
     g_in_hook = 1;  /* Prevent hooks from firing during init */
 
     /* Resolve real functions via RTLD_NEXT — must happen before g_initialized */
@@ -1205,7 +1205,7 @@ static void clawguard_v2_init(void) {
 }
 
 __attribute__((destructor))
-static void clawguard_v2_fini(void) {
+static void clawtower_v2_fini(void) {
     g_initialized = 0;
     if (g_shm) {
         munmap(g_shm, sizeof(shared_state_t));
@@ -1218,17 +1218,17 @@ static void clawguard_v2_fini(void) {
  * ══════════════════════════════════════════════════════════════════════════ */
 
 /* Export ring buffer state for testing */
-uint16_t clawguard_get_threat_level(void) { return g_ring.threat_level; }
-uint16_t clawguard_get_alert_state(void) { return g_ring.alert_state; }
-uint32_t clawguard_get_ring_count(void) { return g_ring.total_count; }
-uint32_t clawguard_get_ring_head(void) { return atomic_load(&g_ring.head); }
+uint16_t clawtower_get_threat_level(void) { return g_ring.threat_level; }
+uint16_t clawtower_get_alert_state(void) { return g_ring.alert_state; }
+uint32_t clawtower_get_ring_count(void) { return g_ring.total_count; }
+uint32_t clawtower_get_ring_head(void) { return atomic_load(&g_ring.head); }
 
-syscall_event_t *clawguard_get_ring_event(uint32_t idx) {
+syscall_event_t *clawtower_get_ring_event(uint32_t idx) {
     if (idx >= RING_SIZE) return NULL;
     return &g_ring.events[idx];
 }
 
-void clawguard_reset(void) {
+void clawtower_reset(void) {
     memset(&g_ring, 0, sizeof(g_ring));
     g_sensitive_fd_count = 0;
     memset(g_socket_fds, 0, sizeof(g_socket_fds));

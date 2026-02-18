@@ -11,7 +11,7 @@ ClawTower already demonstrates strong runtime detection architecture and meaning
 
 In short:
 
-- ✅ Strong detection plane (auditd + behavior + policy + SecureClaw + sentinel + aggregator).
+- ✅ Strong detection plane (auditd + behavior + policy + BarnacleDefense + sentinel + aggregator).
 - ⚠️ Critical prevention gap in privileged command pathways (validated in Red Lobster v8 report).
 - ⚠️ Identity-first governance controls exist in pieces but are not yet a first-class model.
 - ⚠️ Supply-chain controls are present but need stricter default enforcement assumptions for hostile marketplaces.
@@ -29,7 +29,7 @@ In short:
   - `src/behavior.rs`
   - `src/auditd.rs`
   - `src/scanner.rs`
-  - `src/secureclaw.rs`
+  - `src/barnacle.rs`
   - `src/proxy.rs`
   - `src/api.rs`
   - `src/bin/clawsudo.rs`
@@ -52,7 +52,7 @@ The runtime combines:
 - syscall/event visibility (`auditd`),
 - command/path behavioral rules (`behavior`),
 - policy-driven checks (`policy`),
-- vendor IOC/pattern checks (`secureclaw`),
+- vendor IOC/pattern checks (`barnacle`),
 - filesystem integrity protection (`sentinel`),
 - and periodic misconfiguration checks (`scanner`).
 
@@ -65,7 +65,7 @@ This is the correct architectural direction for enterprise runtime security.
 
 ### 4) Supply-chain IOC framework exists
 
-`secureclaw` already supports supply-chain IOC patterns including ClawHavoc-related indicators, which is strategically aligned with current threat reality.
+`barnacle` already supports supply-chain IOC patterns including ClawHavoc-related indicators, which is strategically aligned with current threat reality.
 
 ## Critical findings
 

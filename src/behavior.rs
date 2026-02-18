@@ -35,7 +35,7 @@ pub enum BehaviorCategory {
     #[allow(dead_code)]
     SocialEngineering,
     #[allow(dead_code)]
-    SecureClawMatch,
+    BarnacleMatch,
 }
 
 impl fmt::Display for BehaviorCategory {
@@ -48,7 +48,7 @@ impl fmt::Display for BehaviorCategory {
             BehaviorCategory::SideChannel => write!(f, "SIDE_CHAN"),
             BehaviorCategory::FinancialTheft => write!(f, "FIN_THEFT"),
             BehaviorCategory::SocialEngineering => write!(f, "SOCIAL_ENG"),
-            BehaviorCategory::SecureClawMatch => write!(f, "SC_MATCH"),
+            BehaviorCategory::BarnacleMatch => write!(f, "BARNACLE_MATCH"),
         }
     }
 }
@@ -333,15 +333,15 @@ const SHELL_PROFILE_PATHS: &[&str] = &[
 
 /// Known install paths for ClawTower's LD_PRELOAD guard library.
 const CLAWTOWER_GUARD_PATHS: &[&str] = &[
-    "/usr/local/lib/libclawguard.so",
-    "/usr/local/lib/clawtower/libclawguard.so",
+    "/usr/local/lib/libclawtower.so",
+    "/usr/local/lib/clawtower/libclawtower.so",
 ];
 
 /// Check if a value references ClawTower's own guard library (allowlisted for LD_PRELOAD).
 ///
 /// Uses exact path matching against known install locations rather than substring
 /// matching, which could be bypassed by an attacker naming a malicious library
-/// something like `/tmp/not-clawguard-evil.so`.
+/// something like `/tmp/not-clawtower-evil.so`.
 fn is_clawtower_guard(value: &str) -> bool {
     CLAWTOWER_GUARD_PATHS.iter().any(|path| value.contains(path))
 }
@@ -777,7 +777,7 @@ pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Sever
     // before the command but may not appear in the parsed command args.
     if !event.raw.is_empty() && event.raw.contains("LD_PRELOAD=") {
         // Don't flag ClawTower's own guard or build tools
-        if !event.raw.contains("clawtower") && !event.raw.contains("clawguard") {
+        if !event.raw.contains("clawtower") && !event.raw.contains("clawtower") {
             let raw_binary = event.args.first().map(|s| {
                 s.rsplit('/').next().unwrap_or(s).to_string()
             }).unwrap_or_default();
@@ -993,7 +993,7 @@ pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Sever
             for pattern in PRELOAD_BYPASS_PATTERNS {
                 if cmd.contains(pattern) {
                     // Don't flag our own legitimate preload operations
-                    if !cmd.contains("clawtower") && !cmd.contains("clawguard") {
+                    if !cmd.contains("clawtower") && !cmd.contains("clawtower") {
                         // Don't flag normal compiler/linker invocations
                         if ["ld", "collect2", "cc1", "cc1plus", "gcc", "g++", "rustc", "cc"].contains(&binary) {
                             // Normal compilation — linker uses -dynamic-linker /lib/ld-linux-*.so.1
@@ -3486,7 +3486,7 @@ mod tests {
     #[test]
     fn test_ld_preload_persistence_clawtower_guard_allowed() {
         let result = check_ld_preload_persistence(
-            "echo 'LD_PRELOAD=/usr/local/lib/libclawguard.so' >> /etc/environment",
+            "echo 'LD_PRELOAD=/usr/local/lib/libclawtower.so' >> /etc/environment",
             Some("/etc/environment"),
         );
         assert!(result.is_none(), "ClawTower's own guard should be allowlisted");
@@ -3495,7 +3495,7 @@ mod tests {
     #[test]
     fn test_ld_preload_persistence_clawtower_subdir_allowed() {
         let result = check_ld_preload_persistence(
-            "echo 'LD_PRELOAD=/usr/local/lib/clawtower/libclawguard.so' >> .bashrc",
+            "echo 'LD_PRELOAD=/usr/local/lib/clawtower/libclawtower.so' >> .bashrc",
             None,
         );
         assert!(result.is_none(), "Known ClawTower guard path should be allowlisted");
@@ -3532,15 +3532,15 @@ mod tests {
 
     #[test]
     fn test_is_ld_preload_persistence_line_allows_clawtower() {
-        assert!(!is_ld_preload_persistence_line("LD_PRELOAD=/usr/local/lib/libclawguard.so"));
-        assert!(!is_ld_preload_persistence_line("export LD_PRELOAD=/usr/local/lib/clawtower/libclawguard.so"));
+        assert!(!is_ld_preload_persistence_line("LD_PRELOAD=/usr/local/lib/libclawtower.so"));
+        assert!(!is_ld_preload_persistence_line("export LD_PRELOAD=/usr/local/lib/clawtower/libclawtower.so"));
     }
 
     #[test]
     fn test_is_ld_preload_persistence_line_rejects_fake_clawtower() {
-        // Unknown paths should NOT be allowlisted even if they contain "clawtower" or "clawguard"
+        // Unknown paths should NOT be allowlisted even if they contain "clawtower" or "clawtower"
         assert!(is_ld_preload_persistence_line("export LD_PRELOAD=/opt/clawtower/guard.so"));
-        assert!(is_ld_preload_persistence_line("LD_PRELOAD=/tmp/clawguard-fake.so"));
+        assert!(is_ld_preload_persistence_line("LD_PRELOAD=/tmp/clawtower-fake.so"));
     }
 
     #[test]

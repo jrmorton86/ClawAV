@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - **Rust** (stable toolchain) — for building
-- **gcc** — for building `libclawguard.so`
+- **gcc** — for building `libclawtower.so`
 - **auditd** — kernel audit framework (`apt install auditd`)
 - **ufw** — firewall (`apt install ufw`)
 - **AppArmor** (optional but recommended) — MAC profiles
@@ -21,7 +21,7 @@
    ```bash
    bash scripts/build-preload.sh
    ```
-   Creates `libclawguard.so` in the project root
+   Creates `libclawtower.so` in the project root
 
 3. **Configure ClawTower:**
    - Don't edit `config.toml` directly — it's replaced on updates
@@ -125,10 +125,10 @@ Makes audit rules immutable until next reboot.
 
 **Step 11 — Build and install LD_PRELOAD guard:**
 Runs `build-preload.sh` and `enable-preload.sh`:
-- Compiles `libclawguard.so` and installs to `/usr/local/lib/clawtower/`
+- Compiles `libclawtower.so` and installs to `/usr/local/lib/clawtower/`
 - Creates default preload policy at `/etc/clawtower/preload-policy.json`
 - Adds `Environment=LD_PRELOAD=...` to the systemd service
-- Makes `libclawguard.so` immutable
+- Makes `libclawtower.so` immutable
 
 **Step 12 — Self-destruct:**
 ```bash
@@ -179,7 +179,7 @@ After installation, ClawTower provides these commands:
 | `clawtower configure` | Interactive configuration wizard |
 | `clawtower update` | Self-update from GitHub releases |
 | `clawtower verify-audit` | Verify audit chain integrity |
-| `clawtower sync` | Update SecureClaw pattern databases |
+| `clawtower sync` | Update BarnacleDefense pattern databases |
 | `clawtower harden` | Apply tamper-proof hardening |
 | `clawtower uninstall` | Remove ClawTower (requires admin key) |
 | `clawtower logs` | Tail service logs |
@@ -229,7 +229,7 @@ Requires physical access + recovery boot:
 chattr -i /usr/local/bin/clawtower
 chattr -i /etc/systemd/system/clawtower.service
 chattr -i /etc/sudoers.d/clawtower-deny
-chattr -i /usr/local/lib/clawtower/libclawguard.so
+chattr -i /usr/local/lib/clawtower/libclawtower.so
 
 systemctl stop clawtower
 systemctl disable clawtower

@@ -171,11 +171,12 @@ if $BUILD_FROM_SOURCE && [[ -f "$SCRIPT_DIR/build-preload.sh" ]]; then
     bash "$SCRIPT_DIR/build-preload.sh" 2>/dev/null && info "LD_PRELOAD guard built" || warn "LD_PRELOAD build failed (optional)"
 fi
 
-# ── Initialize SecureClaw patterns ────────────────────────────────────────────
-if [[ -f "$PROJECT_DIR/.gitmodules" ]] && command -v git &>/dev/null; then
-    log "Loading SecureClaw pattern databases..."
-    cd "$PROJECT_DIR"
-    git submodule update --init vendor/secureclaw 2>/dev/null && info "SecureClaw: 170+ detection patterns loaded" || warn "SecureClaw init failed (optional)"
+# ── Install BarnacleDefense pattern databases ────────────────────────────────
+log "Installing BarnacleDefense pattern databases..."
+BARNACLE_DIR="/etc/clawtower/barnacle"
+mkdir -p "$BARNACLE_DIR"
+if [[ -d "$PROJECT_DIR/patterns/barnacle" ]]; then
+    cp "$PROJECT_DIR/patterns/barnacle/"*.json "$BARNACLE_DIR/" 2>/dev/null && info "BarnacleDefense: pattern databases installed" || warn "BarnacleDefense pattern copy failed (optional)"
 fi
 
 # ── Install systemd service ──────────────────────────────────────────────────

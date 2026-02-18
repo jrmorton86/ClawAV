@@ -16,7 +16,7 @@
 
 **Files:** All 78 files containing clawtower/ClawTower/CLAWTOWER references
 
-**IMPORTANT:** Do NOT rename `clawsudo`, `secureclaw`, or `openclaw` references. Only rename `clawtower`/`ClawTower`/`CLAWTOWER` patterns.
+**IMPORTANT:** Do NOT rename `clawsudo`, `barnacle`, or `openclaw` references. Only rename `clawtower`/`ClawTower`/`CLAWTOWER` patterns.
 
 **Step 1: Run bulk sed replacements**
 
@@ -66,10 +66,10 @@ sed -i 's/clawtower\.rules/clawtower.rules/g' $FILES
 sed -i 's/clawtower/clawtower/g' $FILES
 ```
 
-**Step 2: Verify no clawtower references remain (except clawsudo, secureclaw, openclaw)**
+**Step 2: Verify no clawtower references remain (except clawsudo, barnacle, openclaw)**
 
 ```bash
-grep -rn "clawtower" --include="*.rs" --include="*.toml" --include="*.yaml" --include="*.yml" --include="*.md" --include="*.sh" . | grep -v target | grep -v .git | grep -v clawsudo | grep -v secureclaw | grep -v openclaw
+grep -rn "clawtower" --include="*.rs" --include="*.toml" --include="*.yaml" --include="*.yml" --include="*.md" --include="*.sh" . | grep -v target | grep -v .git | grep -v clawsudo | grep -v barnacle | grep -v openclaw
 ```
 
 Expected: no output (all references replaced)
@@ -197,7 +197,7 @@ grep "clawtower.service" src/scanner.rs
 **Step 5: Final grep for any remaining clawtower**
 
 ```bash
-grep -rn "clawtower" --include="*.rs" --include="*.toml" --include="*.yaml" --include="*.yml" --include="*.md" --include="*.sh" . | grep -v target | grep -v .git | grep -v clawsudo | grep -v secureclaw | grep -v openclaw | grep -v "ClawTower → ClawTower"
+grep -rn "clawtower" --include="*.rs" --include="*.toml" --include="*.yaml" --include="*.yml" --include="*.md" --include="*.sh" . | grep -v target | grep -v .git | grep -v clawsudo | grep -v barnacle | grep -v openclaw | grep -v "ClawTower → ClawTower"
 ```
 
 Expected: no output (allow "ClawTower → ClawTower" in rename commit messages/docs)

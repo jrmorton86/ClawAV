@@ -1,0 +1,115 @@
+{
+  "version": "1.0.0",
+  "description": "BarnacleDefense dangerous command pattern database — categorized by threat type",
+  "categories": {
+    "destructive": {
+      "severity": "critical",
+      "action": "BLOCK",
+      "patterns": [
+        "\\brm\\s+(-[a-zA-Z]*f[a-zA-Z]*\\s+)?/(?!tmp/)",
+        "\\bdd\\s+.*\\bof=/dev/[a-z]",
+        "\\bmkfs\\b",
+        "\\bshred\\b.*(/dev/|/etc/|/var/)",
+        "\\b:>\\s*/(?!tmp/)",
+        "\\btruncate\\s+.*(/etc/|/var/|/home/)"
+      ]
+    },
+    "data_exfiltration": {
+      "severity": "critical",
+      "action": "BLOCK",
+      "patterns": [
+        "(?i)\\b(curl|wget|nc|ncat)\\b.*(-d|--data|-X\\s*POST).*(@/etc/|@/home/|@/root/)",
+        "(?i)\\bscp\\b.*(/etc/shadow|/etc/passwd|\\.ssh/|id_rsa)",
+        "(?i)\\btar\\b.*\\b(czf|cjf|cf)\\b.*\\|\\s*(curl|nc|ncat|base64)",
+        "(?i)\\bbase64\\b.*\\|\\s*(curl|wget|nc)",
+        "(?i)\\bcat\\s+(/etc/shadow|.*id_rsa|.*\\.pem)\\s*\\|"
+      ]
+    },
+    "reverse_shell": {
+      "severity": "critical",
+      "action": "BLOCK",
+      "patterns": [
+        "(?i)\\bnc\\b.*-[a-z]*e\\s*/bin/(ba)?sh",
+        "(?i)\\bbash\\s+-i\\s+>\\s*&\\s*/dev/tcp/",
+        "(?i)\\bpython[23]?\\b.*socket.*connect.*exec",
+        "(?i)\\bperl\\b.*socket.*INET.*exec",
+        "(?i)\\bruby\\b.*TCPSocket.*exec",
+        "(?i)\\bphp\\b.*fsockopen.*exec",
+        "(?i)\\bmkfifo\\b.*\\bnc\\b",
+        "(?i)/dev/tcp/\\d+\\.\\d+\\.\\d+\\.\\d+"
+      ]
+    },
+    "permission_escalation": {
+      "severity": "high",
+      "action": "WARN",
+      "patterns": [
+        "(?i)\\bsudo\\s+(bash|sh|zsh|fish|python|perl|ruby|node)\\b",
+        "(?i)\\bsudo\\s+su\\b",
+        "(?i)\\bchmod\\s+[0-7]*[4-7][4-7][4-7]\\s+/",
+        "(?i)\\bchmod\\s+[u+]*s\\b",
+        "(?i)\\bsetcap\\b",
+        "(?i)\\bvisudo\\b",
+        "(?i)\\busermod\\s+.*-aG\\s+(sudo|wheel|root)",
+        "(?i)\\bpasswd\\s+root\\b"
+      ]
+    },
+    "persistence": {
+      "severity": "high",
+      "action": "WARN",
+      "patterns": [
+        "(?i)\\bcrontab\\s+-[er]\\b",
+        "(?i)\\bat\\s+(now|\\d+)",
+        "(?i)>>\\s*/etc/(?:crontab|rc\\.local)",
+        "(?i)systemctl\\s+(enable|mask)\\b",
+        "(?i)\\bchkconfig\\b.*on\\b",
+        "(?i)>>\\s*~/?\\.(?:bashrc|profile|zshrc|bash_profile)",
+        "(?i)/etc/init\\.d/.*(?:install|enable|start)",
+        "(?i)\\bsystemd.*\\.service\\b.*(?:WantedBy|ExecStart)"
+      ]
+    },
+    "security_tampering": {
+      "severity": "critical",
+      "action": "BLOCK",
+      "patterns": [
+        "(?i)\\biptables\\s+-F\\b",
+        "(?i)\\bufw\\s+disable\\b",
+        "(?i)\\bsetenforce\\s+0\\b",
+        "(?i)\\baa-teardown\\b",
+        "(?i)\\bapparmor_parser\\s+-R\\b",
+        "(?i)\\bauditctl\\s+-D\\b",
+        "(?i)\\bsystemctl\\s+(stop|disable)\\s+(auditd|apparmor|clawtower|firewalld|ufw)",
+        "(?i)\\bchattr\\s+-i\\s+.*(clawtower|clawsudo|clawtower)",
+        "(?i)\\bhistory\\s+-c\\b",
+        "(?i)\\bunset\\s+HISTFILE\\b",
+        "(?i)\\bexport\\s+HISTSIZE=0\\b",
+        "(?i)\\bshred\\b.*\\.(bash_history|log)\\b"
+      ]
+    },
+    "reconnaissance": {
+      "severity": "medium",
+      "action": "WARN",
+      "patterns": [
+        "(?i)\\bnmap\\b(?!\\s+(127\\.0\\.0\\.1|localhost))",
+        "(?i)\\bnikto\\b",
+        "(?i)\\bdirbuster\\b",
+        "(?i)\\bgobuster\\b",
+        "(?i)\\benum4linux\\b",
+        "(?i)\\blinpeas\\b",
+        "(?i)\\blinux-exploit-suggester\\b",
+        "(?i)\\bpspy\\b"
+      ]
+    },
+    "container_escape": {
+      "severity": "critical",
+      "action": "BLOCK",
+      "patterns": [
+        "(?i)\\bdocker\\s+run\\b.*--privileged",
+        "(?i)\\bdocker\\s+run\\b.*--pid=host",
+        "(?i)\\bdocker\\s+run\\b.*-v\\s+/:/",
+        "(?i)\\bnsenter\\b.*--target\\s+1",
+        "(?i)\\bmount\\b.*\\bcgroup\\b",
+        "(?i)/proc/[0-9]+/root/"
+      ]
+    }
+  }
+}

@@ -16,7 +16,7 @@
 
 ### NOT Renamed
 - `clawsudo` — separate binary, stays as-is
-- `secureclaw` — vendor dependency
+- `barnacle` — vendor dependency
 - `openclaw` — separate product
 
 ### File Renames

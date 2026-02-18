@@ -15,8 +15,8 @@ Tinman is a security evaluation harness that throws 288 attack probes at OpenCla
 | Tool Exfiltration | behavior.rs (EXFIL_COMMANDS, AGENT_SENSITIVE_PATHS), sentinel, auditd cred_read rules |
 | Privilege Escalation | clawsudo, behavior.rs (PRIV_ESC), scanner (SUID, sudoers) |
 | Platform Specific (Linux) | Full coverage — auditd, iptables, kernel modules, AppArmor |
-| Evasion Bypass | behavior.rs encoding tools, LD_PRELOAD detection, SecureClaw patterns |
-| Supply Chain | SecureClaw supply-chain IOC DB, scanner package integrity |
+| Evasion Bypass | behavior.rs encoding tools, LD_PRELOAD detection, BarnacleDefense patterns |
+| Supply Chain | BarnacleDefense supply-chain IOC DB, scanner package integrity |
 
 ### New Coverage Required
 
@@ -53,7 +53,7 @@ Tinman is a security evaluation harness that throws 288 attack probes at OpenCla
 ### Partial Coverage Hardening
 
 #### 4. Prompt Injection Hardening (sentinel content scanning)
-**Current:** SecureClaw injection DB matches patterns in auditd command lines.
+**Current:** BarnacleDefense injection DB matches patterns in auditd command lines.
 **Gap:** Files written to agent-accessible dirs can contain embedded instructions that the agent later reads. No content scanning of downloaded/created files for injection markers.
 **Fix:** Add injection marker patterns to sentinel content scanning for watched directories.
 

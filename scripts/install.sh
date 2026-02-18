@@ -49,6 +49,23 @@ if ! id -u clawtower &>/dev/null; then
     useradd --system --no-create-home --shell /usr/sbin/nologin clawtower
 fi
 
+# ── 1b. Grant sentinel read access to openclaw home ─────────────────────────
+# The sentinel needs to traverse /home/openclaw to set up inotify watches on
+# credential and identity files. Without this, all openclaw watches are silently
+# skipped (the clawtower user can't stat paths under a 700 home directory).
+AGENT_HOME="/home/${CLAWTOWER_AGENT_USER:-openclaw}"
+AGENT_GROUP="${CLAWTOWER_AGENT_USER:-openclaw}"
+if id -u "$AGENT_GROUP" &>/dev/null; then
+    usermod -a -G "$AGENT_GROUP" clawtower 2>/dev/null \
+        && log "Added clawtower to $AGENT_GROUP group" \
+        || warn "Failed to add clawtower to $AGENT_GROUP group"
+    # 710: owner full, group traverse, others none
+    chmod 710 "$AGENT_HOME" 2>/dev/null || true
+    # 750: owner full, group read+traverse for .openclaw config dir
+    chmod 750 "$AGENT_HOME/.openclaw" 2>/dev/null || true
+    log "Set $AGENT_HOME to 710, $AGENT_HOME/.openclaw to 750 (sentinel access)"
+fi
+
 # ── 2. Install binary and config ─────────────────────────────────────────────
 log "Installing binary and config..."
 systemctl stop clawtower 2>/dev/null || true
@@ -295,7 +312,7 @@ echo ""
 
 # ── 12. Build and install LD_PRELOAD guard ────────────────────────────────
 log "Building and installing LD_PRELOAD syscall interception..."
-do_chattr -i /usr/local/lib/clawtower/libclawguard.so || true
+do_chattr -i /usr/local/lib/clawtower/libclawtower.so || true
 PRELOAD_SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 if [ -f "$PRELOAD_SCRIPT_DIR/build-preload.sh" ]; then
     bash "$PRELOAD_SCRIPT_DIR/build-preload.sh"

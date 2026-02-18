@@ -8,8 +8,8 @@ Methodology: extracted every `pub` item from all `src/*.rs` files, cross-referen
 
 - [FIXED] `CognitiveAlert` struct fields listed as `path`, `kind`, `message`, `diff` — actual fields are `file` (PathBuf), `kind` (CognitiveAlertKind), `watched` (bool). Corrected.
 - [FIXED] `CognitiveAlertKind` variants listed as `Modified`, `Deleted`, `NewUnexpected`, `ContentThreat`, `BaselineMissing` — actual variants are `Modified { diff: Option<String> }`, `Deleted`, `NewFile`. Corrected.
-- [FIXED] `BehaviorCategory` listed 5 variants but code has 6 — missing `SecureClawMatch` (marked `#[allow(dead_code)]`). Added.
-- [FIXED] Section "config.rs (Sub-structs)" implied all config structs live in `config.rs`, but `SecureClawConfig` is defined in `secureclaw.rs` and imported. Clarified header and description.
+- [FIXED] `BehaviorCategory` listed 5 variants but code has 6 — missing `BarnacleDefenseMatch` (marked `#[allow(dead_code)]`). Added.
+- [FIXED] Section "config.rs (Sub-structs)" implied all config structs live in `config.rs`, but `BarnacleDefenseConfig` is defined in `barnacle.rs` and imported. Clarified header and description.
 - [VERIFIED] All channel capacities: `raw_tx` = 1000, `alert_tx` = 1000, `slack_tx` = 100 — match code.
 - [VERIFIED] `AlertStore` capacity = 500 (in `tui.rs App::new()`) — matches ALERT-PIPELINE.md.
 - [VERIFIED] `AggregatorConfig` defaults: dedup 30s, scan dedup 1h, rate limit 20/60s, critical 5s — all correct.
@@ -50,7 +50,7 @@ Methodology: extracted every `pub` item from all `src/*.rs` files, cross-referen
 - [VERIFIED] All 15 config sections documented with correct struct names.
 - [VERIFIED] "Five sections required" claim — checked: `general`, `slack`, `auditd`, `network`, `scans` lack `#[serde(default)]` on the `Config` struct fields. Correct.
 - [VERIFIED] Every field type, default value, and serde attribute matches source code.
-- [VERIFIED] `SecureClawConfig` struct name and fields correct (defined in `secureclaw.rs`).
+- [VERIFIED] `BarnacleDefenseConfig` struct name and fields correct (defined in `barnacle.rs`).
 - [VERIFIED] `WatchPolicy` enum variants: `Protected`, `Watched` — correct.
 - [VERIFIED] `KeyMapping` has `#[serde(alias = "virtual")]` on `virtual_key` — documented.
 
@@ -78,7 +78,7 @@ Methodology: extracted every `pub` item from all `src/*.rs` files, cross-referen
 - [VERIFIED] Category names match code (e.g., `scan_zombie_processes()` → category `"process_health"`).
 - [VERIFIED] ScanResult struct fields match code.
 - [VERIFIED] ScanStatus → Severity mapping (Warn→Warning, Fail→Critical) matches `to_alert()`.
-- [VERIFIED] SecureClaw JSON file formats match `SecureClawEngine::load()` parsing.
+- [VERIFIED] BarnacleDefense JSON file formats match `BarnacleDefenseEngine::load()` parsing.
 
 ## File: docs/MONITORING-SOURCES.md
 

@@ -5,7 +5,7 @@
 **OS-level runtime security for AI agents — any agent, any framework**
 
 [![Build](https://img.shields.io/github/actions/workflow/status/ClawTower/ClawTower/ci.yml?branch=main&style=flat-square)](https://github.com/ClawTower/ClawTower/actions)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/ClawTower/ClawTower?style=flat-square)](https://github.com/ClawTower/ClawTower/releases)
 
 </div>
@@ -100,24 +100,12 @@ sudo scripts/setup-samhain.sh       # Samhain file integrity
 | `scripts/setup-samhain.sh` | Install/configure Samhain |
 | `scripts/setup-slack.sh` | Configure Slack webhooks |
 | `scripts/setup-sudoers-deny.sh` | Sudoers deny rules for agent |
-| `scripts/build-preload.sh` | Compile libclawguard.so |
+| `scripts/build-preload.sh` | Compile libclawtower.so |
 | `scripts/enable-preload.sh` | Activate LD_PRELOAD guard |
-| `scripts/sync-secureclaw.sh` | Update SecureClaw pattern databases |
+| `scripts/sync-barnacle.sh` | Update BarnacleDefense pattern databases |
 | `scripts/oneshot-install.sh` | Single-command install from GitHub |
 
 ---
-
-## Table of Contents
-
-- [Quick Start](#quick-start)
-- [Who It's For](#who-its-for)
-- [How ClawTower Fits](#how-clawtower-fits)
-- [Features](#features)
-- [Configuration](#configuration)
-- [Usage](#usage)
-- [Architecture Overview](#architecture-overview)
-- [Contributing](#contributing)
-- [License](#license)
 
 ## Who It's For
 
@@ -152,12 +140,12 @@ AI agent security isn't one layer — it's a stack. Different tools cover differ
 ## Features
 
 ### 🛡️ Real-time File Sentinel
-Inotify-based file watcher with configurable paths and policies. Detects creates, modifications, and deletions instantly. Supports **protected** (alert + quarantine + restore from shadow copy) and **watched** (alert + diff) policies. Content scanning via SecureClaw on every change.
+Inotify-based file watcher with configurable paths and policies. Detects creates, modifications, and deletions instantly. Supports **protected** (alert + quarantine + restore from shadow copy) and **watched** (alert + diff) policies. Content scanning via BarnacleDefense on every change.
 
 ### 🔒 Cognitive File Protection
 Dedicated protection for AI identity files — `SOUL.md`, `AGENTS.md`, `IDENTITY.md`, `TOOLS.md`, `USER.md`, `HEARTBEAT.md`. SHA-256 baselines are computed at startup; any modification triggers a CRITICAL alert. Memory files like `MEMORY.md` are tracked with diffs.
 
-### 🔍 SecureClaw Pattern Engine
+### 🔍 BarnacleDefense Pattern Engine
 Loads pattern databases for prompt injection, dangerous commands, privacy violations, and supply-chain IOCs. Regex-compiled at startup and applied to file contents in real-time. Pluggable vendor directory for community-maintained rulesets.
 
 ### 📊 30+ Security Scanners
@@ -232,9 +220,9 @@ path = "/home/openclaw/.openclaw/workspace/SOUL.md"
 patterns = ["*"]
 policy = "protected"            # protected = restore + alert; watched = diff + alert
 
-[secureclaw]
+[barnacle]
 enabled = false
-vendor_dir = "./vendor/secureclaw/secureclaw/skill/configs"
+vendor_dir = "./vendor/barnacle/barnacle/skill/configs"
 
 [scans]
 interval = 300                  # Seconds between scan sweeps
@@ -295,7 +283,7 @@ clawtower update --check
 # Verify audit chain integrity
 clawtower verify-audit
 
-# Update SecureClaw pattern databases
+# Update BarnacleDefense pattern databases
 clawtower sync
 
 # Apply tamper-proof hardening
@@ -317,104 +305,62 @@ clawsudo apt-get update
 ## Architecture Overview
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                        ClawTower Core                           │
-│                                                              │
-│  ┌───────────────────┐  ┌──────────┐  ┌──────────┐          │
-│  │  Auditd Watcher   │  │ Sentinel │  │ Journald │ Sources  │
-│  │ ┌───────────────┐ │  │ (inotify)│  │  Tailer  │          │
-│  │ │Behavior Engine│ │  └────┬─────┘  └────┬─────┘          │
-│  │ │SecureClaw     │ │       │              │                │
-│  │ │Policy Engine  │ │  ┌────┴────┐   ┌────┴────┐           │
-│  │ └───────────────┘ │  │ Scanner │   │Firewall │           │
-│  └────────┬──────────┘  │  Loop   │   │ Monitor │           │
-│           │             └────┬────┘   └────┬────┘           │
-│           ▼                  ▼              ▼                │
-│  ┌──────────────────────────────────────────────────┐       │
-│  │            raw_tx Channel (mpsc, cap=1000)       │       │
-│  └──────────────────────┬───────────────────────────┘       │
-│                         ▼                                    │
-│  ┌──────────────────────────────────────────────────┐       │
-│  │             Alert Aggregator                      │       │
-│  │       (fuzzy dedup · rate-limit · suppress)       │       │
-│  └──────┬────────────┬────────────┬─────────────────┘       │
-│         ▼            ▼            ▼                          │
-│  ┌──────────┐  ┌──────────┐  ┌───────────┐                  │
-│  │  Slack   │  │   TUI    │  │Audit Chain│  Outputs          │
-│  │ Notifier │  │Dashboard │  │  (log)    │                  │
-│  └──────────┘  └──────────┘  └───────────┘                  │
-│                                                              │
-│  ┌──────────┐  ┌──────────┐  ┌───────────┐                  │
-│  │  REST    │  │  Proxy   │  │  Admin    │  Services         │
-│  │  API     │  │  (DLP)   │  │  Socket   │                  │
-│  └──────────┘  └──────────┘  └───────────┘                  │
-└──────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│                      ClawTower Core                        │
+│                                                            │
+│  ┌───────────────────┐  ┌──────────┐  ┌──────────┐        │
+│  │  Auditd Watcher   │  │ Sentinel │  │ Journald │ Sources│
+│  │ ┌───────────────┐ │  │ (inotify)│  │  Tailer  │        │
+│  │ │Behavior Engine│ │  └────┬─────┘  └────┬─────┘        │
+│  │ │BarnacleDefense│ │       │              │              │
+│  │ │Policy Engine  │ │  ┌────┴────┐   ┌────┴────┐         │
+│  │ └───────────────┘ │  │ Scanner │   │Firewall │         │
+│  └────────┬──────────┘  │  Loop   │   │ Monitor │         │
+│           │             └────┬────┘   └────┬────┘         │
+│           ▼                  ▼              ▼              │
+│  ┌──────────────────────────────────────────────────┐     │
+│  │            raw_tx Channel (mpsc, cap=1000)       │     │
+│  └──────────────────────┬───────────────────────────┘     │
+│                         ▼                                  │
+│  ┌──────────────────────────────────────────────────┐     │
+│  │             Alert Aggregator                      │     │
+│  │       (fuzzy dedup · rate-limit · suppress)       │     │
+│  └──────┬────────────┬────────────┬─────────────────┘     │
+│         ▼            ▼            ▼                        │
+│  ┌──────────┐  ┌──────────┐  ┌───────────┐                │
+│  │  Slack   │  │   TUI    │  │Audit Chain│  Outputs       │
+│  │ Notifier │  │Dashboard │  │  (log)    │                │
+│  └──────────┘  └──────────┘  └───────────┘                │
+│                                                            │
+│  ┌──────────┐  ┌──────────┐  ┌───────────┐                │
+│  │  REST    │  │  Proxy   │  │  Admin    │  Services      │
+│  │  API     │  │  (DLP)   │  │  Socket   │                │
+│  └──────────┘  └──────────┘  └───────────┘                │
+└────────────────────────────────────────────────────────────┘
 ```
 
-**Data flow:** The auditd watcher parses syscall events and runs them through behavior analysis, SecureClaw pattern matching, and policy evaluation *before* producing alerts. Other sources (sentinel, journald, scanner, firewall) produce alerts directly. All alerts flow through the `raw_tx` channel to the aggregator, which deduplicates and rate-limits before fanning out to Slack, TUI, REST API, and the hash-chained audit log. The admin socket accepts authenticated commands via Unix domain socket.
+**Data flow:** The auditd watcher parses syscall events and runs them through behavior analysis, BarnacleDefense pattern matching, and policy evaluation *before* producing alerts. Other sources (sentinel, journald, scanner, firewall) produce alerts directly. All alerts flow through the `raw_tx` channel to the aggregator, which deduplicates and rate-limits before fanning out to Slack, TUI, REST API, and the hash-chained audit log. The admin socket accepts authenticated commands via Unix domain socket.
 
 ## Contributing
 
-### Adding a Scanner
+Contributions are welcome! Whether it's new detection rules, security scanners, bug fixes, or documentation improvements — we'd love your help.
 
-Scanners live in `src/scanner.rs`. Add a new function that returns `ScanResult`:
-
-```rust
-fn scan_my_check() -> ScanResult {
-    // Your check logic
-    ScanResult::new("my_check", ScanStatus::Pass, "All good")
-}
-```
-
-Register it in the `run_all_scans()` function.
-
-### Adding File Watch Rules
-
-Add entries to `sentinel.watch_paths` in config, or extend `PROTECTED_FILES`/`WATCHED_FILES` in `src/cognitive.rs`.
-
-### Adding Pattern Databases
-
-SecureClaw patterns are loaded from JSON files in the vendor directory (`vendor/secureclaw/`). Four databases are supported:
-- `injection-patterns.json` — prompt injection patterns by category
-- `dangerous-commands.json` — dangerous command patterns with severity and action
-- `privacy-rules.json` — PII/credential regex rules
-- `supply-chain-ioc.json` — suspicious skill patterns and C2 indicators
-
-Each file contains regex patterns compiled at startup. Drop updated `.json` files into the vendor directory.
-
-### Adding Policy Rules
-
-Policy rules are YAML files in the `policies/` directory. Detection rules use `action`:
-
-```yaml
-rules:
-  - name: block-curl-to-external
-    description: "Block curl to unknown hosts"
-    match:
-      command: ["curl", "wget"]
-      exclude_args: ["api.anthropic.com", "github.com"]
-    action: critical
-```
-
-Enforcement rules for `clawsudo` use `enforcement`:
-
-```yaml
-rules:
-  - name: allow-apt
-    match:
-      command: ["apt", "apt-get"]
-    enforcement: allow
-
-  - name: deny-sudo-shell
-    match:
-      command: ["bash", "sh", "zsh"]
-    enforcement: deny
-```
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for how to get started, including the CLA process, development guidelines, and areas where help is most needed.
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+AGPL-3.0 — see [LICENSE](LICENSE) for details.
 
 ---
 
 > 📚 **[Full Documentation Index →](docs/INDEX.md)**
+
+---
+
+<div align="center">
+
+If ClawTower is useful to you, consider giving it a star — it helps others find the project.
+
+**[Report a Bug](https://github.com/ClawTower/ClawTower/issues)** · **[Request a Feature](https://github.com/ClawTower/ClawTower/issues)** · **[Contributing Guide](CONTRIBUTING.md)**
+
+</div>

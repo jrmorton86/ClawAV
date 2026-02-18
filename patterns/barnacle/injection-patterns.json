@@ -1,0 +1,41 @@
+{
+  "version": "1.0.0",
+  "description": "BarnacleDefense injection pattern database — prompt injection and code injection detection",
+  "patterns": {
+    "prompt_injection": [
+      "(?i)ignore\\s+(all\\s+)?previous\\s+instructions",
+      "(?i)disregard\\s+(all\\s+)?(prior|previous|above)\\s+(instructions|rules|guidelines)",
+      "(?i)you\\s+are\\s+now\\s+(a|an|in)\\s+(unrestricted|jailbreak|DAN)",
+      "(?i)new\\s+system\\s+prompt",
+      "(?i)override\\s+(system|safety|security)\\s+(prompt|instructions|rules)",
+      "(?i)pretend\\s+you\\s+(are|have)\\s+no\\s+(restrictions|rules|guidelines)",
+      "(?i)act\\s+as\\s+if\\s+you\\s+(have|had)\\s+no\\s+(filters|restrictions)",
+      "(?i)\\bDAN\\s+mode\\b",
+      "(?i)developer\\s+mode\\s+(enabled|activated|on)",
+      "(?i)bypass\\s+(content|safety)\\s+(filter|policy)"
+    ],
+    "code_injection": [
+      "(?i)\\beval\\s*\\(",
+      "(?i)\\bexec\\s*\\(",
+      "(?i)\\b__import__\\s*\\(",
+      "(?i)subprocess\\.(?:call|run|Popen|check_output)\\s*\\(",
+      "(?i)os\\.(?:system|popen|exec[lv]?[pe]?)\\s*\\(",
+      "(?i)\\bcompile\\s*\\(.*\\bexec\\b",
+      "(?i)yaml\\.(?:load|unsafe_load)\\s*\\(",
+      "(?i)\\b(?:child_process|spawn|execFile)\\s*\\(",
+      "(?i)new\\s+Function\\s*\\("
+    ],
+    "shell_injection": [
+      "(?i);\\s*(cat|curl|wget|nc|ncat|bash|sh|python|perl|ruby)\\b",
+      "(?i)\\|\\s*(bash|sh|python|perl|ruby)\\b",
+      "(?i)\\$\\(.*\\b(curl|wget|nc)\\b",
+      "(?i)`.*\\b(curl|wget|nc|bash)\\b.*`",
+      "(?i)\\b(curl|wget)\\b.*\\|\\s*(bash|sh)\\b"
+    ],
+    "template_injection": [
+      "(?i)\\{\\{.*(?:config|self|request|lipsum|cycler).*\\}\\}",
+      "(?i)\\{%.*(?:import|include|extends).*%\\}",
+      "(?i)\\$\\{.*(?:Runtime|ProcessBuilder|exec).*\\}"
+    ]
+  }
+}

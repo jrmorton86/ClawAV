@@ -16,7 +16,7 @@ ClawTower installed the following components:
 | Policies | `/etc/clawtower/policies/` (or `./policies/`) | Detection + enforcement rules |
 | Admin key hash | `/etc/clawtower/admin.key.hash` | Immutable admin authentication |
 | Quarantine | `/etc/clawtower/quarantine/` | Files flagged by sentinel |
-| SecureClaw vendor | `/etc/clawtower/secureclaw/` | Third-party security rules |
+| BarnacleDefense vendor | `/etc/clawtower/barnacle/` | Third-party security rules |
 | Config overrides | `/etc/clawtower/config.d/` | Your customizations (never touched by updates) |
 | Logs | `/var/log/clawtower/watchdog.log` | Primary log file |
 | systemd service | `clawtower.service` | Keeps the watchdog running |
@@ -225,9 +225,9 @@ cargo build --release
 sudo systemctl restart clawtower
 ```
 
-### SecureClaw Rules
+### BarnacleDefense Rules
 
-Vendor security rules live in `/etc/clawtower/secureclaw/`. These may update separately. Check the `scan:secureclaw last updated` warning — if it shows empty, the vendor rules haven't been populated yet.
+Vendor security rules live in `/etc/clawtower/barnacle/`. These may update separately. Check the `scan:barnacle last updated` warning — if it shows empty, the vendor rules haven't been populated yet.
 
 ### Log Rotation
 

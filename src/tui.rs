@@ -194,7 +194,7 @@ impl App {
             config_sections: vec![
                 "general".into(), "slack".into(), "auditd".into(), "network".into(), 
                 "falco".into(), "samhain".into(), "api".into(), "scans".into(), 
-                "proxy".into(), "policy".into(), "secureclaw".into(), "netpolicy".into(),
+                "proxy".into(), "policy".into(), "barnacle".into(), "netpolicy".into(),
                 "response".into(),
             ],
             config_selected_section: 0,
@@ -1044,16 +1044,16 @@ fn get_section_fields(config: &Config, section: &str, tool_cache: &HashMap<Strin
                 field_type: FieldType::Text,
             },
         ],
-        "secureclaw" => vec![
+        "barnacle" => vec![
             ConfigField {
                 name: "enabled".to_string(),
-                value: config.secureclaw.enabled.to_string(),
+                value: config.barnacle.enabled.to_string(),
                 section: section.to_string(),
                 field_type: FieldType::Enum(vec!["true".into(), "false".into()]),
             },
             ConfigField {
                 name: "vendor_dir".to_string(),
-                value: config.secureclaw.vendor_dir.clone(),
+                value: config.barnacle.vendor_dir.clone(),
                 section: section.to_string(),
                 field_type: FieldType::Text,
             },
@@ -1174,9 +1174,9 @@ fn apply_field_to_config(config: &mut Config, section: &str, field_name: &str, v
             "dir" => config.policy.dir = value.to_string(),
             _ => {}
         },
-        "secureclaw" => match field_name {
-            "enabled" => config.secureclaw.enabled = value == "true",
-            "vendor_dir" => config.secureclaw.vendor_dir = value.to_string(),
+        "barnacle" => match field_name {
+            "enabled" => config.barnacle.enabled = value == "true",
+            "vendor_dir" => config.barnacle.vendor_dir = value.to_string(),
             _ => {}
         },
         "netpolicy" => match field_name {

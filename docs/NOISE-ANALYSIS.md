@@ -93,7 +93,7 @@ The AWS SSM commands with base64-encoded SQL are legitimate devops operations BU
 
 **Recommended action:** Keep this rule. Reduce grep false positives by requiring minimum base64 string length.
 
-### 8. SecureClaw dangerous command detections (28 alerts)
+### 8. BarnacleDefense dangerous command detections (28 alerts)
 
 Breakdown:
 - `curl.*|.*python` piped commands (11): **False positive, tunable** — legitimate API checks piped to json.tool
@@ -138,7 +138,7 @@ Reading config files is not writing. The rule name says "write" but triggers on 
 | scan:user_accounts (root has shell, no pw) | 45 | True positive, deduplicate | Alert once/day |
 | scan:systemd_hardening incomplete | 45 | True positive, deduplicate | Alert once/day |
 | scan:swap_tmpfs issues | 45 | True positive, deduplicate | Alert once/day |
-| scan:secureclaw last updated (empty) | 45 | True positive, wrong severity | Fix: populate or demote to Info |
+| scan:barnacle last updated (empty) | 45 | True positive, wrong severity | Fix: populate or demote to Info |
 | scan:password_policy issues | 45 | True positive, deduplicate | Alert once/day |
 | scan:openclaw:tunnel (no VPN) | 45 | True positive, deduplicate | Alert once/day |
 | scan:ntp_sync (NTP not enabled) | 45 | True positive, deduplicate | Alert once/day |
@@ -208,7 +208,7 @@ Reading config files is not writing. The rule name says "write" but triggers on 
 The P0 sentinel skills loop (2,748 Critical alerts) is addressed on the `fix/sentinel-noise` branch with two changes:
 
 1. **Debounce restore** — Sentinel's quarantine→restore→re-detect loop is broken by restoring the debounce window after shadow copy restoration, preventing the immediate re-trigger cycle.
-2. **Content scan exclusions** — The `exclude_content_scan` config field allows substring-based path exclusions for SecureClaw content scanning. Skills directories and workspace markdown files can be excluded from content scanning while still receiving file-change alerts.
+2. **Content scan exclusions** — The `exclude_content_scan` config field allows substring-based path exclusions for BarnacleDefense content scanning. Skills directories and workspace markdown files can be excluded from content scanning while still receiving file-change alerts.
 
 **Estimated impact:** 2,748 Critical sentinel alerts → **~40** (98.5% reduction). The remaining ~40 are legitimate content scan hits on non-excluded paths.
 

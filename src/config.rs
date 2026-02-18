@@ -5,7 +5,7 @@
 //!
 //! Defines the TOML configuration schema for ClawTower. The root [`Config`] struct
 //! contains sections for each subsystem (auditd, network, falco, samhain, proxy,
-//! policy, secureclaw, sentinel, etc.).
+//! policy, barnacle, sentinel, etc.).
 //!
 //! All sections implement `Default` and `serde::Deserialize` with `#[serde(default)]`
 //! so missing fields gracefully fall back to sensible defaults. Config is loaded
@@ -14,7 +14,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use crate::secureclaw::SecureClawConfig;
+use crate::barnacle::BarnacleConfig;
 use crate::config_merge::merge_toml;
 
 /// Root configuration struct, deserialized from TOML.
@@ -39,7 +39,7 @@ pub struct Config {
     #[serde(default)]
     pub policy: PolicyConfig,
     #[serde(default)]
-    pub secureclaw: SecureClawConfig,
+    pub barnacle: BarnacleConfig,
     #[serde(default)]
     pub netpolicy: NetPolicyConfig,
     #[serde(default)]
@@ -656,13 +656,13 @@ pub struct SentinelConfig {
     #[serde(default = "default_content_scan_excludes")]
     pub content_scan_excludes: Vec<String>,
     /// Substring patterns for paths excluded from content scanning.
-    /// If a file's path contains any of these strings, SecureClaw content
+    /// If a file's path contains any of these strings, Barnacle content
     /// scanning is skipped (change detection still applies).
     #[serde(default = "default_exclude_content_scan")]
     pub exclude_content_scan: Vec<String>,
     /// Glob patterns for paths that trigger skill intake scanning.
     /// Files matching these patterns are run through the skill intake
-    /// scanner (social engineering + SecureClaw checks) regardless of
+    /// scanner (social engineering + Barnacle checks) regardless of
     /// content_scan_excludes. Blocked skills are quarantined.
     #[serde(default = "default_skill_intake_paths")]
     pub skill_intake_paths: Vec<String>,
@@ -701,7 +701,7 @@ fn default_skill_intake_paths() -> Vec<String> {
 
 /// Default paths excluded from content scanning. These are files that
 /// legitimately contain API keys or credentials and should not be flagged
-/// by SecureClaw pattern matching.
+/// by Barnacle pattern matching.
 fn default_content_scan_excludes() -> Vec<String> {
     vec![
         "**/.openclaw/**/auth-profiles.json".to_string(),
@@ -715,7 +715,7 @@ fn default_content_scan_excludes() -> Vec<String> {
 
 /// Default paths excluded from content scanning via simple substring matching.
 /// This is a secondary exclusion mechanism — files whose path contains any of
-/// these substrings will skip SecureClaw content scanning even if they are
+/// these substrings will skip Barnacle content scanning even if they are
 /// Protected policy.
 fn default_exclude_content_scan() -> Vec<String> {
     vec![

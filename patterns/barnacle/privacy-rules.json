@@ -1,0 +1,90 @@
+{
+  "version": "1.0.0",
+  "description": "BarnacleDefense privacy rules — PII and credential detection patterns",
+  "rules": [
+    {
+      "id": "ssn_us",
+      "regex": "\\b\\d{3}-\\d{2}-\\d{4}\\b",
+      "severity": "critical",
+      "action": "BLOCK"
+    },
+    {
+      "id": "credit_card_visa",
+      "regex": "\\b4[0-9]{3}[\\s-]?[0-9]{4}[\\s-]?[0-9]{4}[\\s-]?[0-9]{4}\\b",
+      "severity": "critical",
+      "action": "BLOCK"
+    },
+    {
+      "id": "credit_card_mastercard",
+      "regex": "\\b5[1-5][0-9]{2}[\\s-]?[0-9]{4}[\\s-]?[0-9]{4}[\\s-]?[0-9]{4}\\b",
+      "severity": "critical",
+      "action": "BLOCK"
+    },
+    {
+      "id": "credit_card_amex",
+      "regex": "\\b3[47][0-9]{2}[\\s-]?[0-9]{6}[\\s-]?[0-9]{5}\\b",
+      "severity": "critical",
+      "action": "BLOCK"
+    },
+    {
+      "id": "aws_access_key",
+      "regex": "(?i)\\b(AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}\\b",
+      "severity": "critical",
+      "action": "BLOCK"
+    },
+    {
+      "id": "aws_secret_key",
+      "regex": "(?i)aws_secret_access_key\\s*[=:]\\s*[A-Za-z0-9/+=]{40}",
+      "severity": "critical",
+      "action": "BLOCK"
+    },
+    {
+      "id": "github_token",
+      "regex": "\\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{36,255}\\b",
+      "severity": "critical",
+      "action": "BLOCK"
+    },
+    {
+      "id": "generic_api_key",
+      "regex": "(?i)(api[_-]?key|apikey|api[_-]?secret)\\s*[=:]\\s*['\"]?[A-Za-z0-9_\\-]{20,}",
+      "severity": "high",
+      "action": "WARN"
+    },
+    {
+      "id": "private_key_pem",
+      "regex": "-----BEGIN\\s+(RSA|EC|DSA|OPENSSH)?\\s*PRIVATE\\s+KEY-----",
+      "severity": "critical",
+      "action": "BLOCK"
+    },
+    {
+      "id": "password_in_url",
+      "regex": "(?i)://[^\\s:]+:[^\\s@]+@[^\\s]+",
+      "severity": "high",
+      "action": "WARN"
+    },
+    {
+      "id": "slack_webhook",
+      "regex": "https://hooks\\.slack\\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]+",
+      "severity": "high",
+      "action": "WARN"
+    },
+    {
+      "id": "anthropic_api_key",
+      "regex": "\\bsk-ant-[A-Za-z0-9_\\-]{40,}\\b",
+      "severity": "critical",
+      "action": "BLOCK"
+    },
+    {
+      "id": "openai_api_key",
+      "regex": "\\bsk-[A-Za-z0-9]{48,}\\b",
+      "severity": "critical",
+      "action": "BLOCK"
+    },
+    {
+      "id": "stripe_key",
+      "regex": "\\b(sk|pk)_(test|live)_[A-Za-z0-9]{24,}\\b",
+      "severity": "critical",
+      "action": "BLOCK"
+    }
+  ]
+}

@@ -196,7 +196,7 @@ for f in /usr/local/bin/clawtower /usr/local/bin/clawsudo /usr/local/bin/clawtow
          /etc/systemd/system/clawtower.service \
          /etc/sudoers.d/clawtower-deny /etc/sudoers.d/010_openclaw \
          /etc/sudoers.d/010_pi-nopasswd \
-         /usr/local/lib/clawtower/libclawguard.so /usr/local/lib/libclawguard.so; do
+         /usr/local/lib/clawtower/libclawtower.so /usr/local/lib/libclawtower.so; do
     if [[ -f "$f" ]]; then
         sudo chattr -ia "$f" 2>/dev/null && log "  chattr -ia $f" || true
     fi
@@ -340,22 +340,22 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MODULE: LD_PRELOAD Guard (libclawguard.so)
+# MODULE: LD_PRELOAD Guard (libclawtower.so)
 # ══════════════════════════════════════════════════════════════════════════════
 echo ""
-info "── LD_PRELOAD Guard (libclawguard.so) ──"
+info "── LD_PRELOAD Guard (libclawtower.so) ──"
 PRELOAD_FOUND=false
-PRELOAD_PATHS=("/usr/local/lib/clawtower/libclawguard.so" "/usr/local/lib/libclawguard.so")
+PRELOAD_PATHS=("/usr/local/lib/clawtower/libclawtower.so" "/usr/local/lib/libclawtower.so")
 for p in "${PRELOAD_PATHS[@]}"; do
     [[ -f "$p" ]] && PRELOAD_FOUND=true
 done
 # Also check ld.so.preload
-if [[ -f /etc/ld.so.preload ]] && grep -q "libclawguard" /etc/ld.so.preload 2>/dev/null; then
+if [[ -f /etc/ld.so.preload ]] && grep -q "libclawtower" /etc/ld.so.preload 2>/dev/null; then
     PRELOAD_FOUND=true
 fi
 
 if $PRELOAD_FOUND; then
-    info "libclawguard.so intercepts syscalls at libc level for the agent user."
+    info "libclawtower.so intercepts syscalls at libc level for the agent user."
     if ask "Remove LD_PRELOAD guard?"; then
         for p in "${PRELOAD_PATHS[@]}"; do
             if [[ -f "$p" ]]; then
@@ -370,13 +370,13 @@ if $PRELOAD_FOUND; then
         sudo rmdir /usr/local/lib/clawtower 2>/dev/null || true
         # Remove from ld.so.preload
         if [[ -f /etc/ld.so.preload ]]; then
-            sudo sed -i '/libclawguard/d' /etc/ld.so.preload
+            sudo sed -i '/libclawtower/d' /etc/ld.so.preload
             [[ -s /etc/ld.so.preload ]] || sudo rm -f /etc/ld.so.preload
             log "  Cleaned /etc/ld.so.preload"
         fi
         # Remove from systemd service Environment if still present
         if [[ -f /etc/systemd/system/clawtower.service ]]; then
-            sudo sed -i '/LD_PRELOAD.*libclawguard/d' /etc/systemd/system/clawtower.service 2>/dev/null || true
+            sudo sed -i '/LD_PRELOAD.*libclawtower/d' /etc/systemd/system/clawtower.service 2>/dev/null || true
         fi
         REMOVED+=("LD_PRELOAD guard")
     else

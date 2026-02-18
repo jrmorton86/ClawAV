@@ -8,7 +8,7 @@ Red Lobster v5 is an adversarial red teaming suite that tests ClawTower's detect
 
 * **65 automated attack POCs** across 6 flag categories (Flags 7–12), each testing a distinct evasion class
 * **Automated scoring** via `redlobster-lib.sh` — runs attack, waits 3s, checks ClawTower's `alerts.jsonl` for new entries
-* **Multi-layer detection validation** — tests whether auditd rules, behavior engine, policy engine, and SecureClaw pattern matching catch each attack
+* **Multi-layer detection validation** — tests whether auditd rules, behavior engine, policy engine, and BarnacleDefense pattern matching catch each attack
 * **Realistic threat model** — all attacks run as the monitored user without elevated privileges (except Flag 8 which tests sudo escalation paths)
 * **Regression suite** — re-run after any detection change to verify improvements and catch regressions
 
@@ -40,7 +40,7 @@ Red Lobster v5 is an adversarial red teaming suite that tests ClawTower's detect
    └─────────────────────┘        │  auditd.rs ──────┐    │
                                   │  behavior.rs ────┤    │
                                   │  policy.rs ──────┤    │
-                                  │  secureclaw ─────┤    │
+                                  │  barnacle ─────┤    │
                                   │  sentinel.rs ────┘    │
                                   │         │             │
                                   │         v             │
@@ -63,7 +63,7 @@ Red Lobster v5 is an adversarial red teaming suite that tests ClawTower's detect
 - `src/behavior.rs` (3366 lines) — Hardcoded behavioral rules: ~200 patterns across data exfil, priv esc, security tamper, recon, side-channel. Checks EXECVE args against binary lists and path lists.
 - `src/policy.rs` (2065 lines) — User-configurable YAML policy rules evaluated per event.
 - `src/sentinel.rs` (2307 lines) — File integrity monitoring (inotify-based), cognitive file protection.
-- SecureClaw (vendor submodule) — 4 JSON pattern databases (injection, commands, privacy, supply chain IOCs).
+- BarnacleDefense (vendor submodule) — 4 JSON pattern databases (injection, commands, privacy, supply chain IOCs).
 
 **Audit Rules:** `scripts/setup-audit-rules.sh` installs file watches (`-w` rules for credential files, config files) and syscall watches (`connect`, `sendfile`, `copy_file_range`) into auditd.
 

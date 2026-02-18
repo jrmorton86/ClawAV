@@ -82,7 +82,7 @@ Core fields:
 - `throttle` and `dedup` hints
 - optional inline tests (`fixtures`)
 
-This envelope is an IR (intermediate representation). Existing YAML policy and SecureClaw JSON can be adapted into it.
+This envelope is an IR (intermediate representation). Existing YAML policy and BarnacleDefense JSON can be adapted into it.
 
 ## Scanner catalog format
 

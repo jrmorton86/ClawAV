@@ -1,10 +1,10 @@
 /*
- * libclawguard.so — LD_PRELOAD syscall interception for ClawAV
+ * libclawtower.so — LD_PRELOAD syscall interception for ClawAV
  *
  * Intercepts execve, open, openat, connect and checks against a cached
  * JSON policy loaded once at library init.  Denied calls return -1/EACCES.
  *
- * Build: gcc -shared -fPIC -o libclawguard.so src/preload/interpose.c -ldl
+ * Build: gcc -shared -fPIC -o libclawtower.so src/preload/interpose.c -ldl
  */
 
 #define _GNU_SOURCE
@@ -158,7 +158,7 @@ static int parse_bool_value(const char *json, const char *key) {
 /* ── Constructor: load policy once ─────────────────────────────────────── */
 
 __attribute__((constructor))
-static void clawguard_init(void) {
+static void clawtower_init(void) {
     /* Resolve real functions */
     real_execve  = (real_execve_t)dlsym(RTLD_NEXT, "execve");
     real_open    = (real_open_t)dlsym(RTLD_NEXT, "open");

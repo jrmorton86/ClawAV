@@ -306,7 +306,7 @@ fn save_shadow(path: &Path) {
 /// Creates baselines on first run, then checks for modifications, deletions,
 /// and new files. Protected file changes are CRIT; watched file changes are WARN
 /// with auto-rebaseline.
-pub fn scan_cognitive_integrity(workspace_dir: &Path, baseline_path: &Path, _secureclaw: Option<&crate::secureclaw::SecureClawEngine>) -> Vec<ScanResult> {
+pub fn scan_cognitive_integrity(workspace_dir: &Path, baseline_path: &Path, _barnacle: Option<&crate::barnacle::BarnacleEngine>) -> Vec<ScanResult> {
     // If no baseline exists yet, create one and save shadows
     if !baseline_path.exists() {
         let baseline = CognitiveBaseline::from_workspace(workspace_dir);
@@ -344,8 +344,8 @@ pub fn scan_cognitive_integrity(workspace_dir: &Path, baseline_path: &Path, _sec
                 if alert.watched {
                     // Watched files (MEMORY.md) are mutable working documents — they legitimately
                     // contain command references, IPs, paths, etc. as technical documentation.
-                    // Do NOT run SecureClaw content scanning on them (too many false positives).
-                    // SecureClaw scanning is reserved for protected identity files only.
+                    // Do NOT run Barnacle content scanning on them (too many false positives).
+                    // Barnacle scanning is reserved for protected identity files only.
                     
                     // Clean change — report diff, rebaseline
                     results.push(ScanResult::new("cognitive", ScanStatus::Warn,

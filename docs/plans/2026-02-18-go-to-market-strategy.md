@@ -1,6 +1,6 @@
 # ClawTower Go-to-Market Strategy
 
-**INTERNAL — PRAXIS AI + JR MORENO — NOT FOR PUBLIC DISTRIBUTION**
+**INTERNAL — PRAXIS AI + JR MORTON — NOT FOR PUBLIC DISTRIBUTION**
 
 ---
 
@@ -13,7 +13,7 @@ ClawTower is the first OS-level security watchdog purpose-built for AI agents. N
 3. **Retain commercial control** — CLA enables dual-licensing; exclusive commercial services through Praxis AI
 4. **Preserve optionality** — if open source doesn't achieve critical mass, pivot to closed-source Praxis-internal product
 
-**IP ownership remains with JR Moreno.** Praxis receives an exclusive commercial license for services, support, and enterprise distribution. Equity negotiation is deferred until community traction validates the market.
+**IP ownership remains with JR Morton.** Praxis receives an exclusive commercial license for services, support, and enterprise distribution. Equity negotiation is deferred until community traction validates the market.
 
 ---
 
@@ -59,7 +59,7 @@ ClawTower is the only product that:
 ┌─────────────────────────────────────────────────────┐
 │  ClawTower Source Code                               │
 │  License: AGPL-3.0-or-later                         │
-│  Copyright (c) 2025-2026 JR Moreno                  │
+│  Copyright (c) 2025-2026 JR Morton                  │
 │                                                      │
 │  ┌──────────────┐    ┌───────────────────────┐      │
 │  │ Contributors │───▶│ CLA (assign rights)   │      │
@@ -78,11 +78,11 @@ ClawTower is the only product that:
 - **Real OSI-approved open source** — engineers trust it, unlike BSL/SSPL/Elastic which are "source-available"
 - **Network copyleft clause** — if a cloud provider hosts ClawTower as a service, they must open-source their modifications (this is why MongoDB moved to SSPL — AGPL already covers this use case)
 - **Prevents silent forks** — competitors can fork, but must release all modifications under AGPL
-- **CLA enables dual-licensing** — because all contributors assign rights, the copyright holder (JR Moreno) can offer a separate commercial license that doesn't have AGPL obligations
+- **CLA enables dual-licensing** — because all contributors assign rights, the copyright holder (JR Morton) can offer a separate commercial license that doesn't have AGPL obligations
 
 **Why CLA (Contributor License Agreement):**
 - Without CLA, each contributor owns their copyright and you can't dual-license
-- CLA grants JR Moreno (and by extension, Praxis via commercial license) the right to relicense contributions
+- CLA grants JR Morton (and by extension, Praxis via commercial license) the right to relicense contributions
 - Industry standard: used by Apache Foundation, Google, Meta, GitLab
 - Use the [Apache Individual CLA](https://www.apache.org/licenses/icla.pdf) as template — well-understood, contributor-friendly
 
@@ -98,15 +98,15 @@ ClawTower is the only product that:
 
 ### Current State: Consulting Services
 
-- JR Moreno provides consulting services to Praxis AI
-- ClawTower IP is **not a work product** — it is independently created and owned by JR Moreno
+- JR Morton provides consulting services to Praxis AI
+- ClawTower IP is **not a work product** — it is independently created and owned by JR Morton
 - Praxis receives an exclusive right to provide commercial services (support, enterprise licenses, managed deployment) around ClawTower
 
 ### Commercial License Terms (Proposed)
 
 | Term | Detail |
 |------|--------|
-| **Licensor** | JR Moreno (sole copyright holder) |
+| **Licensor** | JR Morton (sole copyright holder) |
 | **Exclusive Licensee** | Praxis AI, Inc. |
 | **Scope** | Commercial sublicensing, enterprise support, managed services, training |
 | **Territory** | Worldwide |
@@ -114,7 +114,7 @@ ClawTower is the only product that:
 | **Revenue share** | [To be negotiated — 15-30% of commercial revenue to licensor] |
 | **Equity trigger** | If ARR from ClawTower exceeds $[X], renegotiate for equity position |
 | **Termination** | If Praxis fails to commercialize within 18 months, exclusive rights revert to non-exclusive |
-| **Attribution** | All commercial distributions must credit "Created by JR Moreno" |
+| **Attribution** | All commercial distributions must credit "Created by JR Morton" |
 
 ### Equity Negotiation Framework
 
@@ -128,45 +128,80 @@ This protects both sides: Praxis doesn't give equity for an unproven product, an
 
 ---
 
-## Go-to-Market Phases
+## Go-to-Market Phases (Viral Cadence)
 
-### Phase 1: Open Source Launch (Weeks 1-4) — "Flood the Space"
+> **Operating assumption:** This is going viral. Timelines are compressed to hours/days, not weeks/months. Every phase overlaps. Move at the speed of attention.
 
-**Goal:** Establish ClawTower as the first and only AI agent security watchdog. Own the category before anyone else enters.
+### Phase 1: Launch Day (Hours 0-24) — "Detonate"
 
-**Actions:**
-- [ ] Push to GitHub under AGPL-3.0 with CLA
-- [ ] Write launch blog post: "Your AI Agent Has Root Access. Now What?"
-- [ ] Submit to Hacker News, Reddit r/netsec, r/MachineLearning, r/selfhosted
-- [ ] Post on X/Twitter with demo video (TUI dashboard, live threat detection)
-- [ ] Publish to awesome-security, awesome-ai-agents, awesome-rust lists
-- [ ] Create a 2-minute demo video: install ClawTower → deploy AI agent → watch it detect threats in real-time
+**Goal:** Maximum first-impression impact. Own the narrative before anyone else can frame it.
+
+**Hour 0 — Push:**
+- [ ] Push to GitHub under AGPL-3.0 with CLA (repo must be pristine: README, LICENSE, CONTRIBUTING, CODE_OF_CONDUCT all in place)
+- [ ] GitHub repo description, topics, and social preview image set
+
+**Hours 0-2 — Ignite:**
+- [ ] Submit to Hacker News with launch post: "Your AI Agent Has Root Access. Now What?"
+- [ ] Post on X/Twitter with 60-second demo clip (TUI dashboard catching a live threat)
+- [ ] Reddit simultaneous drop: r/netsec, r/MachineLearning, r/selfhosted, r/rust
 - [ ] Cross-post to OpenClaw community channels (Discord, forums)
+
+**Hours 2-12 — Feed the fire:**
+- [ ] Monitor HN/Reddit comments — respond to every technical question within 30 minutes
+- [ ] Engage with quote-tweets and reposts on X — be present, not promotional
+- [ ] DM 10-15 influential AI/security accounts with personalized "thought you'd find this interesting"
+- [ ] If HN front page: prepare follow-up "Ask HN" or Show HN with technical deep-dive
+
+**Hours 12-24 — Sustain:**
+- [ ] Publish to awesome-security, awesome-ai-agents, awesome-rust lists (PRs ready in advance)
+- [ ] Second-wave X post: different angle (e.g., the Red Lobster pentest results, or a specific attack being caught)
+- [ ] Capture and share early community reactions/quotes
 
 **Messaging:** "The AI agent security problem is solved. ClawTower monitors your agent at the OS level — and the agent can't turn it off."
 
-**Key metric:** GitHub stars in first 30 days. Target: 1,000+
+**Key metric:** GitHub stars in first 24 hours. Target: 500+. Stretch: 1,000+
 
-### Phase 2: Community Building (Months 2-6)
+### Phase 2: First Week (Days 1-7) — "Convert Attention to Community"
 
-**Goal:** Build contributor base, establish ClawTower as the standard.
+**Goal:** Turn viral traffic into contributors and adopters before attention decays.
 
-**Actions:**
-- [ ] Create "good first issue" labels for onboarding contributors
-- [ ] Write contributor guide + CLA signing workflow (use CLA Assistant on GitHub)
-- [ ] Monthly security advisories / threat intelligence blog posts
-- [ ] Conference talks: DEF CON AI Village, BSides, KubeCon, AI Engineer Summit
-- [ ] Integration guides for major AI agent frameworks beyond OpenClaw
-- [ ] Plugin system for community-contributed detection rules
-- [ ] Discord / community forum
+**Day 1-2:**
+- [ ] Create 10+ "good first issue" labels — these must be real, meaningful, completable in <2 hours
+- [ ] CLA Assistant bot live on repo (contributors hit zero friction)
+- [ ] Discord server live with channels: #general, #support, #contributing, #security-research
+- [ ] Pin a "Welcome new contributors" discussion on GitHub with architecture overview
 
-**Key metric:** Monthly active contributors. Target: 20+
+**Day 2-4:**
+- [ ] Publish launch blog post with full technical deep-dive (self-hosted or dev.to/Medium)
+- [ ] 2-minute polished demo video: install ClawTower → deploy AI agent → watch it detect threats in real-time
+- [ ] Triage and respond to every issue/PR within 4 hours — speed signals a healthy project
+- [ ] Begin daily changelog/update posts on X showing momentum ("Day 3: 12 PRs merged, 3 new detection rules from community")
 
-### Phase 3: Commercial Offering via Praxis (Months 6-12)
+**Day 4-7:**
+- [ ] Ship at least one community-contributed feature or fix (visible proof the project accepts contributions)
+- [ ] Integration guide for at least one AI agent framework beyond OpenClaw
+- [ ] Identify and personally reach out to top 3-5 early contributors for deeper engagement
+- [ ] Weekly security advisory or threat intel post (establish the cadence immediately)
 
-**Goal:** Monetize through Praxis AI with enterprise features.
+**Key metric:** First external PR merged. Target: within 72 hours. Contributors by day 7: 10+
 
-**Commercial-only features (not in AGPL repo):**
+### Phase 3: First Month (Days 7-30) — "Establish the Standard"
+
+**Goal:** Solidify ClawTower as the default answer. Begin commercial conversations.
+
+**Week 2:**
+- [ ] Plugin/extension system for community-contributed detection rules (lower the barrier)
+- [ ] Conference talk proposals submitted: DEF CON AI Village, BSides, KubeCon, AI Engineer Summit
+- [ ] Integration guides for 3+ AI agent frameworks
+- [ ] Reach out to security-focused YouTubers/streamers for coverage
+
+**Week 3-4:**
+- [ ] First enterprise inbound inquiry → warm intro to Praxis for commercial conversation
+- [ ] Begin compliance documentation (SOC2 mapping, ISO 27001 evidence generation guide)
+- [ ] Praxis commercial license agreement finalized with equity triggers
+- [ ] Monthly community call / office hours (establish recurring cadence)
+
+**Commercial-only features (not in AGPL repo) — begin scoping:**
 - Managed ClawTower SaaS (Praxis-hosted)
 - Multi-agent fleet dashboard (central monitoring for N agents)
 - Compliance reporting (SOC2, ISO 27001 evidence generation)
@@ -174,29 +209,25 @@ This protects both sides: Praxis doesn't give equity for an unproven product, an
 - Custom policy development
 - Incident response consulting
 
-**Key metric:** First 3 paying enterprise customers. Target ARR: $100K+
+**Key metric:** Stars: 2,000+. Contributors: 20+. First enterprise conversation.
 
-### Phase 4: Foundation (Month 12+, conditional)
+### Phase 4: Months 2-6 — "Monetize and Formalize"
 
-**Trigger:** Community traction validates foundation model (500+ stars, 20+ contributors, 3+ enterprise customers).
+**Goal:** First paying customers through Praxis. Evaluate foundation path.
 
-**Structure:**
-- Establish ClawTower Foundation (Linux Foundation / CNCF sandbox project or independent)
-- Transfer trademark (not copyright) to foundation
-- JR Moreno retains copyright + CLA rights (foundation governs the project, not the IP)
-- Foundation handles governance, roadmap voting, contributor management
-- Praxis remains exclusive commercial licensee
+- [ ] First 3 paying enterprise customers. Target ARR: $100K+
+- [ ] Evaluate foundation model (Linux Foundation / CNCF sandbox) based on traction
+- [ ] If foundation path: transfer trademark (not copyright), JR Morton retains copyright + CLA rights
+- [ ] Foundation handles governance, roadmap voting, contributor management
+- [ ] Praxis remains exclusive commercial licensee
 
-**Why foundation matters:**
-- Signals long-term commitment to enterprises evaluating adoption
-- Neutral governance attracts contributors who won't contribute to a single-company project
-- CNCF/LF membership is a credibility signal in enterprise sales
+**Foundation trigger:** 2,000+ stars, 20+ contributors, 3+ enterprise customers.
 
 ---
 
 ## Contingency: Closed-Source Pivot
 
-**Trigger:** Open source fails to achieve critical mass within 12 months (< 500 stars, < 5 contributors, no enterprise interest).
+**Trigger:** Viral launch fizzles — fails to sustain momentum past week 2 (< 500 stars, < 5 contributors, no enterprise interest by day 30).
 
 **Pivot plan:**
 1. Archive GitHub repo (don't delete — maintains credibility)
@@ -209,14 +240,65 @@ This protects both sides: Praxis doesn't give equity for an unproven product, an
 
 ---
 
+## Competitive Landscape
+
+### AI Agent Ecosystem (ClawTower's Addressable Market)
+
+Every agent in this landscape is a potential ClawTower deployment. The more agents that exist, the larger the market for runtime security.
+
+| Category | Players | ClawTower Relevance |
+|----------|---------|-------------------|
+| **Open-source self-hosted agents** | OpenClaw, Nanobot, SuperAGI, memU, Goose | Primary market — self-hosted means the operator owns security. No vendor safety net. |
+| **Serverless/cloud agent runtimes** | Moltworker (Cloudflare Workers) | Lower priority — cloud provider handles OS-level security. ClawTower less relevant unless self-hosted. |
+| **Developer SDKs/frameworks** | Claude Agent SDK, Open Code SDK, LangChain, AgentGPT | Orthogonal — these are prompt/API-level tools. They don't do OS-level monitoring. Users of any SDK still need ClawTower. |
+| **Enterprise managed agents** | Microsoft Copilot, Knolli.ai, Devin, Adept | Low priority — enterprise vendors bundle their own security. But enterprises running *any* open-source agent on their own infra are prime targets. |
+| **Coding agents** | Claude Code, Codex CLI, Aider, Continue, SWE-agent | High-value niche — these agents have direct filesystem and shell access. Exactly the threat model ClawTower was built for. |
+
+**Key takeaway:** ClawTower's market grows with every new AI agent. Agent-agnostic positioning is critical — do not tie the brand to OpenClaw alone.
+
+### Direct Security Overlap: NanoClaw
+
+NanoClaw is the only product that overlaps with ClawTower's positioning. It markets itself as the "security-focused" OpenClaw alternative, using Docker/container isolation to sandbox the agent.
+
+**Why NanoClaw is not a substitute for ClawTower:**
+
+| Dimension | NanoClaw (Container Isolation) | ClawTower (Runtime Monitoring) |
+|-----------|-------------------------------|-------------------------------|
+| **Philosophy** | Prevention — sandbox the agent so it *can't* cause damage | Detection + response — watch what the agent *does* and alert in real-time |
+| **Failure mode** | Container escape = total compromise with zero visibility | Agent has access but every action is monitored, logged, and auditable |
+| **Forensics** | None — if the sandbox holds, nothing to see; if it breaks, nothing was logged | Hash-chained tamper-evident audit trail of every syscall and file change |
+| **Policy granularity** | Binary — inside the container or outside | 270+ behavioral patterns, per-command sudo evaluation, file-level protection policies |
+| **Tamper resistance** | Agent can potentially modify container config if it has Docker access | Swallowed-key pattern — agent cannot modify, stop, or reconfigure ClawTower |
+| **Agent compatibility** | OpenClaw only | Any agent, any framework |
+| **Detection categories** | None (prevention-only) | Data exfil, privilege escalation, persistence, recon, side-channel, container escape |
+
+**Positioning against NanoClaw:** "Containers are a wall. ClawTower is a camera + alarm system. You want both." ClawTower *inside* a NanoClaw container is the strongest possible setup. Frame it as complementary, not competitive.
+
+**Messaging risk:** If NanoClaw gains adoption, users may perceive container isolation as "good enough" security. Counter this with concrete examples of threats containers don't catch: prompt injection causing data exfil through allowed network paths, credential theft from environment variables, or an agent subtly modifying its own identity files. These all happen *inside* the sandbox.
+
+### Adjacent Security Tools (Not Competitors)
+
+These tools operate at different layers. ClawTower complements all of them.
+
+| Tool | Layer | Relationship to ClawTower |
+|------|-------|--------------------------|
+| **OSSEC / Wazuh** | Generic HIDS | No AI-agent behavioral model, no swallowed-key pattern. ClawTower is purpose-built; these are general-purpose. |
+| **Falco / Sysdig** | Container runtime detection | ClawTower *ingests* Falco alerts as a data source. Complementary, not competitive. |
+| **Guardrails / NeMo** | Prompt-level AI safety | Prompt-level, not OS-level. Agent can bypass prompt guards via injection. Orthogonal. |
+| **VirusTotal / marketplace scanners** | Static analysis, pre-install | Catches known malware signatures. ClawTower catches unknown/novel threats at runtime. Complementary. |
+| **AppArmor / SELinux** | Kernel MAC | Mandatory access control. ClawTower *monitors* AppArmor state and can use it as enforcement. Complementary. |
+
+---
+
 ## Competitive Moat (Why This Is Defensible)
 
 1. **First mover in an empty category** — there is no "AI agent security watchdog" market today. ClawTower defines it.
-2. **AGPL prevents hostile forks** — competitors must open-source modifications, so they can't out-feature you in secret
-3. **Deep Linux integration** — 10K+ lines of Rust interfacing with auditd, inotify, eBPF, chattr, AppArmor. Non-trivial to replicate.
-4. **Battle-tested pentest suite** — Red Lobster v5-v8, 35+ attack vectors. This is years of adversarial testing baked in.
-5. **OpenClaw integration** — first-party support for the leading AI agent framework. Network effects if OpenClaw recommends ClawTower.
-6. **Community lock-in** — once engineers deploy ClawTower and write custom policies, switching costs are high
+2. **Agent-agnostic by design** — works with OpenClaw, Claude Code, Devin, LangChain agents, custom agents — anyone on Linux. Not locked to one ecosystem.
+3. **AGPL prevents hostile forks** — competitors must open-source modifications, so they can't out-feature you in secret.
+4. **Deep Linux integration** — 10K+ lines of Rust interfacing with auditd, inotify, eBPF, chattr, AppArmor. Non-trivial to replicate.
+5. **Battle-tested pentest suite** — Red Lobster v5-v8, 35+ attack vectors. This is years of adversarial testing baked in.
+6. **Complementary to everything** — ClawTower sits below containers (NanoClaw), below prompt guards (Guardrails), below marketplace scanners (VirusTotal). It doesn't compete with any layer — it fills the gap none of them cover.
+7. **Community lock-in** — once engineers deploy ClawTower and write custom policies, switching costs are high.
 
 ---
 
@@ -224,23 +306,33 @@ This protects both sides: Praxis doesn't give equity for an unproven product, an
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
+| NanoClaw positioned as "good enough" security | Medium | High | Frame as complementary ("wall + camera"), publish concrete examples of threats containers miss, offer integration guide |
 | Cloud provider forks ClawTower | Medium | High | AGPL forces open-sourcing; CLA enables commercial enforcement |
-| OpenClaw builds native security | Low | Critical | Deepen integration, contribute upstream, make ClawTower complementary not competitive |
-| Generic HIDS adds AI-agent features | Medium | Medium | Move faster, own the narrative, community > features |
+| OpenClaw builds native runtime security | Low | Critical | Deepen integration, contribute upstream, make ClawTower complementary not competitive |
+| Generic HIDS (Wazuh/OSSEC) adds AI-agent features | Medium | Medium | Move faster, own the narrative, community > features |
+| Market fragments across agent-specific security tools | Low | Medium | Agent-agnostic positioning means ClawTower wins regardless of which agent "wins" |
 | No community adoption | Medium | High | Closed-source pivot to Praxis internal |
 | Praxis can't commercialize | Medium | Medium | Revert to non-exclusive license, find alternative partner |
 | Contributor refuses CLA | Low | Low | Standard in industry; explain dual-licensing rationale transparently |
 
 ---
 
-## Immediate Next Steps
+## Immediate Next Steps (Pre-Launch Checklist)
 
-1. **Legal:** Draft CLA based on Apache ICLA template. Review AGPL-3.0 header for all source files.
-2. **GitHub:** Add LICENSE file, CONTRIBUTING.md with CLA requirement, CODE_OF_CONDUCT.md
-3. **Praxis:** Draft commercial license agreement with equity triggers
-4. **Content:** Write launch blog post and record demo video
-5. **Launch:** Coordinate HN/Reddit/X push for maximum first-day visibility
+**Must be done before Hour 0:**
+1. ~~**Legal:** AGPL-3.0 headers on all source files~~ DONE
+2. ~~**GitHub:** LICENSE, CONTRIBUTING.md (with CLA), CODE_OF_CONDUCT.md~~ DONE
+3. **GitHub:** README.md polish — hero section, install one-liner, screenshot/GIF, badges
+4. **GitHub:** Social preview image, repo description, topics (ai-security, agent-monitoring, rust, linux)
+5. **GitHub:** CLA Assistant bot configured and tested
+6. **GitHub:** 10+ "good first issue" labels created and described
+7. **GitHub:** Discussion board enabled with welcome post
+8. **Content:** 60-second demo clip ready for X/Twitter
+9. **Content:** Launch blog post drafted and ready to publish
+10. **Discord:** Server created with channel structure
+
+**Ready to launch when 1-10 are complete. Praxis commercial license can finalize in parallel during Week 2-3.**
 
 ---
 
-*Document prepared for internal strategy discussion. JR Moreno + Praxis AI. February 2026.*
+*Document prepared for internal strategy discussion. JR Morton + Praxis AI. February 2026.*

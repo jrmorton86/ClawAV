@@ -115,5 +115,5 @@ Users see: update happens, service restarts, customizations untouched.
 
 ### Unchanged
 - Runtime behavior, detection logic, alert pipeline
-- SecureClaw vendor dir
+- BarnacleDefense vendor dir
 - Audit chain, API, proxy

@@ -16,7 +16,7 @@ ClawTower's periodic security scanner runs 30+ checks against the host system, p
   - [Package & File Integrity](#package--file-integrity)
   - [Cognitive Integrity](#cognitive-integrity)
   - [OpenClaw-Specific](#openclaw-specific)
-- [SecureClaw Pattern Engine](#secureclaw-pattern-engine)
+- [BarnacleDefense Pattern Engine](#barnacle-pattern-engine)
 - [Adding New Scanners](#adding-new-scanners)
 
 ---
@@ -143,10 +143,10 @@ Checks if AppArmor profiles for OpenClaw restriction and config protection are l
 
 ---
 
-#### `scan_secureclaw_sync()`
-**Category:** `secureclaw`
+#### `scan_barnacle_sync()`
+**Category:** `barnacle`
 
-Checks age of SecureClaw vendor pattern database via git log.
+Checks age of BarnacleDefense vendor pattern database via git log.
 
 | Status | Condition |
 |--------|-----------|
@@ -154,7 +154,7 @@ Checks age of SecureClaw vendor pattern database via git log.
 | Warn | Older than 7 days |
 | Fail | Cannot check status |
 
-**Remediation:** `scripts/sync-secureclaw.sh`
+**Remediation:** `scripts/sync-barnacle.sh`
 
 ---
 
@@ -507,7 +507,7 @@ Verifies SHA-256 hashes of AI identity files against `/etc/clawtower/cognitive-b
 
 Protected file changes produce a `TAMPERING DETECTED` message. Watched file changes are reported with a diff summary (lines added/removed) and automatically rebaselined. Shadow copies in `/etc/clawtower/cognitive-shadow/` enable diff generation for watched files.
 
-**Note:** SecureClaw content scanning is intentionally **not** applied to cognitive files — watched files like MEMORY.md contain too many technical references that trigger false positives. See [SENTINEL.md](SENTINEL.md#relationship-to-cognitive-monitoring) for how the real-time Sentinel layer provides content scanning.
+**Note:** BarnacleDefense content scanning is intentionally **not** applied to cognitive files — watched files like MEMORY.md contain too many technical references that trigger false positives. See [SENTINEL.md](SENTINEL.md#relationship-to-cognitive-monitoring) for how the real-time Sentinel layer provides content scanning.
 
 **Remediation:** If a protected file change is legitimate, delete `/etc/clawtower/cognitive-baselines.sha256` and restart ClawTower to regenerate baselines.
 
@@ -578,9 +578,9 @@ Returns multiple results covering OpenClaw gateway configuration:
 
 ---
 
-## SecureClaw Pattern Engine
+## BarnacleDefense Pattern Engine
 
-The SecureClaw engine (`src/secureclaw.rs`) loads regex-based threat patterns from JSON files and compiles them at startup for fast matching.
+The BarnacleDefense engine (`src/barnacle.rs`) loads regex-based threat patterns from JSON files and compiles them at startup for fast matching.
 
 ### Four Pattern Databases
 
@@ -593,7 +593,7 @@ The SecureClaw engine (`src/secureclaw.rs`) loads regex-based threat patterns fr
 
 ### How Patterns Are Loaded
 
-1. `SecureClawEngine::load(config_dir)` reads 4 JSON files from the vendor directory
+1. `BarnacleDefenseEngine::load(config_dir)` reads 4 JSON files from the vendor directory
 2. Each regex string is compiled to a `regex::Regex` at load time (invalid patterns are skipped with a warning)
 3. Compiled patterns are stored as `CompiledPattern` structs with name, category, severity, regex, and action
 4. The engine provides `check_text()`, `check_command()`, and `check_privacy()` methods
@@ -803,4 +803,4 @@ mod tests {
 - [MONITORING-SOURCES.md](MONITORING-SOURCES.md) — Real-time monitoring sources (complementary to periodic scanners)
 - [ALERT-PIPELINE.md](ALERT-PIPELINE.md) — How scan results become alerts and flow through the pipeline
 - [SENTINEL.md](SENTINEL.md) — Real-time file integrity (Sentinel vs Cognitive comparison)
-- [CONFIGURATION.md](CONFIGURATION.md) — `[scans]` interval and `[secureclaw]` config
+- [CONFIGURATION.md](CONFIGURATION.md) — `[scans]` interval and `[barnacle]` config

@@ -94,7 +94,7 @@ The `connect()` events are parsed as SYSCALL records with destination address ex
 3. For each line, runs the event through (in order):
    - **Tamper detection** (`check_tamper_event`)
    - **Policy engine** (user-configurable rules)
-   - **SecureClaw pattern matching** (`check_command`) — see [SECURITY-SCANNERS.md](SECURITY-SCANNERS.md#secureclaw-pattern-engine)
+   - **BarnacleDefense pattern matching** (`check_command`) — see [SECURITY-SCANNERS.md](SECURITY-SCANNERS.md#barnacle-pattern-engine)
    - **Behavior detection** (hardcoded rules — see §2)
    - **Base alert generation** (`event_to_alert`)
 

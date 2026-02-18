@@ -188,7 +188,7 @@ sudo cp policies/default.yaml /etc/clawtower/policies/default.yaml
 git add policies/default.yaml && git commit -m "policy: fix config-write rule to not trigger on reads"
 ```
 
-**Impact:** -28 Critical alerts/18h (the SecureClaw `sudoers` pattern overlap will also decrease)
+**Impact:** -28 Critical alerts/18h (the BarnacleDefense `sudoers` pattern overlap will also decrease)
 
 ---
 
@@ -204,7 +204,7 @@ git add policies/default.yaml && git commit -m "policy: fix config-write rule to
 In `src/config.rs`, add to the `SentinelConfig` struct (after `max_file_size_kb`):
 
 ```rust
-/// Paths to exclude from content scanning (SecureClaw pattern matching).
+/// Paths to exclude from content scanning (BarnacleDefense pattern matching).
 /// Files in these paths are still watched for changes but not scanned for threats.
 #[serde(default)]
 pub exclude_content_scan: Vec<String>,
@@ -219,7 +219,7 @@ exclude_content_scan: vec![
 
 **Step 2: Use exclude list in sentinel content scanning**
 
-In `src/sentinel.rs`, find where `scan_content` is checked and files are passed to SecureClaw scanning. Before scanning, check if the file path contains any of the `exclude_content_scan` patterns:
+In `src/sentinel.rs`, find where `scan_content` is checked and files are passed to BarnacleDefense scanning. Before scanning, check if the file path contains any of the `exclude_content_scan` patterns:
 
 ```rust
 // Before content scanning
@@ -359,7 +359,7 @@ grep -n "SEC_TAMPER\|SecurityTamper" src/behavior.rs | head -20
 
 **Step 2: Identify the non-suppressed path**
 
-Look for other SEC_TAMPER triggers that don't have the compiler exclusion. The issue might be in the `sudo` pattern matching (SecureClaw `dangerous_commands:config_modification` triggered by `clawsudo` in the command string — already noted in MEMORY.md).
+Look for other SEC_TAMPER triggers that don't have the compiler exclusion. The issue might be in the `sudo` pattern matching (BarnacleDefense `dangerous_commands:config_modification` triggered by `clawsudo` in the command string — already noted in MEMORY.md).
 
 **Step 3: Add compiler binaries to the appropriate exclusion**
 
@@ -411,7 +411,7 @@ In `src/behavior.rs`, add a pattern that checks if the command was invoked with 
 ```rust
 // In the command analysis section, check for LD_PRELOAD= in the full audit record
 if let Some(ref raw) = event.raw_record {
-    if raw.contains("LD_PRELOAD=") && !raw.contains("clawtower") && !raw.contains("clawguard") {
+    if raw.contains("LD_PRELOAD=") && !raw.contains("clawtower") && !raw.contains("clawtower") {
         // Check if this is a build tool
         if !BUILD_TOOL_BASES.iter().any(|t| binary.starts_with(t)) {
             return Some((BehaviorCategory::SecurityTamper, Severity::Critical));

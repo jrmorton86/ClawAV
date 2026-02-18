@@ -147,7 +147,7 @@ Every component below receives a `raw_tx: mpsc::Sender<Alert>` clone and sends a
 - **Source tag**: `"sentinel"`
 - Real-time file integrity monitoring using filesystem notifications (inotify)
 - Supports quarantine and restore of modified files
-- Integrates with SecureClaw pattern matching for content scanning
+- Integrates with BarnacleDefense pattern matching for content scanning
 - Config: `[sentinel]` section — `enabled` + watched paths
 
 ### firewall (`src/firewall.rs`)
@@ -219,11 +219,11 @@ Every component below receives a `raw_tx: mpsc::Sender<Alert>` clone and sends a
 - Sends Info alerts on successful auth, Critical alerts on auth failures
 - See [CLAWSUDO-AND-POLICY.md](CLAWSUDO-AND-POLICY.md#3-admin-key-system) for details
 
-### secureclaw (`src/secureclaw.rs`)
+### barnacle (`src/barnacle.rs`)
 
-- **Source tag**: `"secureclaw"` (evaluated inline from auditd and sentinel)
+- **Source tag**: `"barnacle"` (evaluated inline from auditd and sentinel)
 - Vendor threat pattern database matching (injection, dangerous commands, privacy rules, supply-chain IOCs)
-- Config: `[secureclaw]` section — `enabled`, `vendor_dir`
+- Config: `[barnacle]` section — `enabled`, `vendor_dir`
 
 ### proxy (`src/proxy.rs`)
 
@@ -364,7 +364,7 @@ The terminal dashboard (`src/tui.rs`) uses ratatui/crossterm and provides six ta
 ### Config Editor
 
 The Config tab provides a two-pane editor:
-- **Left sidebar** (25%): Section list (general, slack, auditd, network, falco, samhain, api, scans, proxy, policy, secureclaw, netpolicy)
+- **Left sidebar** (25%): Section list (general, slack, auditd, network, falco, samhain, api, scans, proxy, policy, barnacle, netpolicy)
 - **Right panel** (75%): Fields for the selected section
 
 Saving requires write access to the config file. If not running as root, a sudo password popup appears. The TUI writes directly to `config.toml` (it is no longer immutable). For persistent customizations that survive updates, use `config.d/` drop-in files instead — see [CONFIGURATION.md](CONFIGURATION.md#config-overrides-configd).

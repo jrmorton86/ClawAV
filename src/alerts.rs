@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn test_alert_with_ioc_version() {
-        let alert = Alert::new(Severity::Critical, "secureclaw", "test")
+        let alert = Alert::new(Severity::Critical, "barnacle", "test")
             .with_ioc_version("1.2.3");
         assert_eq!(alert.ioc_version, Some("1.2.3".to_string()));
     }

@@ -55,7 +55,7 @@
 
 ## src/behavior.rs
 
-- `pub enum BehaviorCategory` — `DataExfiltration`, `PrivilegeEscalation`, `SecurityTamper`, `Reconnaissance`, `SideChannel`, `SecureClawMatch`
+- `pub enum BehaviorCategory` — `DataExfiltration`, `PrivilegeEscalation`, `SecurityTamper`, `Reconnaissance`, `SideChannel`, `BarnacleDefenseMatch`
 - `pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Severity)>` — Classify event against ~200 behavioral patterns
 
 ## src/cognitive.rs
@@ -63,7 +63,7 @@
 - `pub struct CognitiveBaseline` — Baseline hashes for AI identity files
 - `pub struct CognitiveAlert` — Alert for cognitive file changes (`file`, `kind`, `watched`)
 - `pub enum CognitiveAlertKind` — `Modified { diff }`, `Deleted`, `NewFile`
-- `pub fn scan_cognitive_integrity(workspace_dir, baseline_path, secureclaw) -> Vec<ScanResult>` — Scan AI workspace files for integrity drift
+- `pub fn scan_cognitive_integrity(workspace_dir, baseline_path, barnacle) -> Vec<ScanResult>` — Scan AI workspace files for integrity drift
 
 ## src/config.rs
 
@@ -193,13 +193,13 @@
 - `pub fn scan_immutable_flags() -> ScanResult` — Check immutable file flags
 - `pub fn check_lsattr_immutable(lsattr_output: &str) -> bool` — Parse lsattr output for immutable bit
 - `pub fn scan_apparmor_protection() -> ScanResult` — Check AppArmor status
-- `pub fn scan_secureclaw_sync() -> ScanResult` — Check SecureClaw pattern sync status
+- `pub fn scan_barnacle_sync() -> ScanResult` — Check BarnacleDefense pattern sync status
 - `pub async fn run_periodic_scans(...)` — Main periodic scan loop
 
-## src/secureclaw.rs
+## src/barnacle.rs
 
-- `pub struct SecureClawConfig` — SecureClaw settings (`enabled`, `vendor_dir`)
-- `pub struct SecureClawEngine` — Compiled vendor threat pattern engine (4 JSON databases)
+- `pub struct BarnacleDefenseConfig` — BarnacleDefense settings (`enabled`, `vendor_dir`)
+- `pub struct BarnacleDefenseEngine` — Compiled vendor threat pattern engine (4 JSON databases)
 - `pub struct CompiledPattern` — Compiled regex pattern (`name`, `category`, `regex`, `severity`, `action`)
 - `pub struct PatternMatch` — Pattern match result (`pattern_name`, `category`, `matched_text`, `severity`, `action`)
 

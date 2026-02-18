@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install libclawguard.so and configure LD_PRELOAD for ClawTower
+# Install libclawtower.so and configure LD_PRELOAD for ClawTower
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -7,7 +7,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 LIB_DIR="/usr/local/lib/clawtower"
 POLICY_DIR="/etc/clawtower"
 POLICY_FILE="$POLICY_DIR/preload-policy.json"
-SO_FILE="$LIB_DIR/libclawguard.so"
+SO_FILE="$LIB_DIR/libclawtower.so"
 SERVICE_FILE="/etc/systemd/system/clawtower.service"
 
 [[ $EUID -eq 0 ]] || { echo "[ERROR] Must run as root"; exit 1; }
@@ -20,9 +20,9 @@ do_chattr() {
 }
 
 # ── 1. Install shared library ────────────────────────────────────────────────
-echo "[PRELOAD] Installing libclawguard.so..."
+echo "[PRELOAD] Installing libclawtower.so..."
 mkdir -p "$LIB_DIR"
-cp "$PROJECT_DIR/libclawguard.so" "$SO_FILE"
+cp "$PROJECT_DIR/libclawtower.so" "$SO_FILE"
 chmod 755 "$SO_FILE"
 
 # ── 2. Create default policy ─────────────────────────────────────────────────
@@ -54,7 +54,7 @@ if [ -f "$SERVICE_FILE" ]; then
 
     if ! grep -q "LD_PRELOAD" "$SERVICE_FILE"; then
         # Add Environment line after [Service] section
-        sed -i '/^\[Service\]/a Environment=LD_PRELOAD=/usr/local/lib/clawtower/libclawguard.so' "$SERVICE_FILE"
+        sed -i '/^\[Service\]/a Environment=LD_PRELOAD=/usr/local/lib/clawtower/libclawtower.so' "$SERVICE_FILE"
         echo "[PRELOAD] Added LD_PRELOAD to systemd service"
     else
         echo "[PRELOAD] LD_PRELOAD already configured in service"
@@ -68,7 +68,7 @@ else
 fi
 
 # ── 4. Make .so immutable ─────────────────────────────────────────────────────
-echo "[PRELOAD] Setting immutable flag on libclawguard.so..."
+echo "[PRELOAD] Setting immutable flag on libclawtower.so..."
 do_chattr +i "$SO_FILE" || echo "[WARN] chattr +i failed (filesystem may not support it)"
 
 echo "[PRELOAD] Installation complete!"

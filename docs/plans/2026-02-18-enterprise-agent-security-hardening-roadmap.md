@@ -12,7 +12,7 @@ New threat intel over the last 24 hours shifts the bar for enterprise adoption:
 2. **ClawHavoc marketplace poisoning** expanded from initial hundreds to much larger historical totals (up to 1,184 in one report).
 3. **Identity-first security** for agents (treating agents as privileged identities) is becoming a dominant enterprise expectation.
 
-ClawTower already has strong runtime coverage (auditd + sentinel + behavior + policies + SecureClaw), but current pentest artifacts show a hard gap in privileged abuse pathways and formal enterprise controls.
+ClawTower already has strong runtime coverage (auditd + sentinel + behavior + policies + BarnacleDefense), but current pentest artifacts show a hard gap in privileged abuse pathways and formal enterprise controls.
 
 ---
 
@@ -49,7 +49,7 @@ ClawTower already has strong runtime coverage (auditd + sentinel + behavior + po
   - `auditd` syscall parsing (`src/auditd.rs`) with connect/sendto monitoring.
   - hardcoded behavior engine (`src/behavior.rs`) with LD_PRELOAD and exfil patterns.
   - YAML policy detection (`src/policy.rs`, `policies/default.yaml`).
-  - SecureClaw vendor pattern matching (`src/secureclaw.rs`) including supply-chain IOC DB.
+  - BarnacleDefense vendor pattern matching (`src/barnacle.rs`) including supply-chain IOC DB.
   - sentinel file integrity + quarantine/restore (`src/sentinel.rs`, `src/config.rs` defaults).
 - **Credential handling primitives**:
   - Proxy with virtual-to-real key mapping + DLP (`src/proxy.rs`).
@@ -168,7 +168,7 @@ Adopt three simultaneous tracks:
 
 ### P2.1 Skill trust pipeline (pre-install + runtime)
 
-**Files:** `src/secureclaw.rs`, `src/sentinel.rs`, `src/policy.rs`  
+**Files:** `src/barnacle.rs`, `src/sentinel.rs`, `src/policy.rs`  
 **Actions:**
 - Add dedicated skill/extension trust policy class:
   - unsigned skill,

@@ -275,7 +275,7 @@ pub enum Action {
     Elevate { new_scan_interval: Duration },
     /// Inject delays into the target process.
     Throttle { delay_us: u64 },
-    /// Force threat level in libclawguard via shared memory.
+    /// Force threat level in libclawtower via shared memory.
     ForceThreatLevel { level: u16 },
     /// Kill a specific process.
     Kill { pid: u32, signal: Signal },

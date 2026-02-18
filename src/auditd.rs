@@ -10,7 +10,7 @@
 //!
 //! The main entry point [`tail_audit_log_with_behavior_and_policy`] tails the
 //! audit log file and runs each event through the behavior detector, policy
-//! engine, SecureClaw patterns, and tamper detection before emitting alerts.
+//! engine, Barnacle patterns, and tamper detection before emitting alerts.
 
 use anyhow::Result;
 use std::io::{BufRead, BufReader};
@@ -838,12 +838,12 @@ pub async fn tail_audit_log_with_behavior_and_policy(
     watched_users: Option<Vec<String>>,
     tx: mpsc::Sender<Alert>,
     policy_engine: Option<crate::policy::PolicyEngine>,
-    secureclaw_engine: Option<Arc<crate::secureclaw::SecureClawEngine>>,
+    barnacle_engine: Option<Arc<crate::barnacle::BarnacleEngine>>,
 ) -> Result<()> {
-    tail_audit_log_full(path, watched_users, tx, policy_engine, secureclaw_engine, None, vec![], false).await
+    tail_audit_log_full(path, watched_users, tx, policy_engine, barnacle_engine, None, vec![], false).await
 }
 
-/// Tail audit log with full detection: behavior, policy, SecureClaw, and network policy.
+/// Tail audit log with full detection: behavior, policy, Barnacle, and network policy.
 ///
 /// When `netpolicy` is provided, connect() syscalls are correlated with their
 /// SOCKADDR records to extract destination IP:port. Destinations are evaluated
@@ -854,7 +854,7 @@ pub async fn tail_audit_log_full(
     watched_users: Option<Vec<String>>,
     tx: mpsc::Sender<Alert>,
     policy_engine: Option<crate::policy::PolicyEngine>,
-    secureclaw_engine: Option<Arc<crate::secureclaw::SecureClawEngine>>,
+    barnacle_engine: Option<Arc<crate::barnacle::BarnacleEngine>>,
     _netpolicy: Option<crate::netpolicy::NetPolicy>,
     _extra_safe_hosts: Vec<String>,
     behavior_shadow_mode: bool,
@@ -997,8 +997,8 @@ pub async fn tail_audit_log_full(
                         }
                     }
 
-                    // Run SecureClaw pattern matching (if available)
-                    if let Some(ref engine) = secureclaw_engine {
+                    // Run Barnacle pattern matching (if available)
+                    if let Some(ref engine) = barnacle_engine {
                         if let Some(ref command) = event.command {
                             let matches = engine.check_command(command);
                             for pattern_match in matches {
@@ -1008,13 +1008,13 @@ pub async fn tail_audit_log_full(
                                     _ => Severity::Info,
                                 };
                                 let msg = format!(
-                                    "[SECURECLAW:{}:{}] {} — {}",
+                                    "[BARNACLE:{}:{}] {} — {}",
                                     pattern_match.database,
                                     pattern_match.category,
                                     pattern_match.pattern_name,
                                     command
                                 );
-                                let _ = tx.send(Alert::new(severity, "secureclaw", &msg)).await;
+                                let _ = tx.send(Alert::new(severity, "barnacle", &msg)).await;
                             }
                         }
                     }

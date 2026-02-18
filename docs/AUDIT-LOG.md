@@ -9,7 +9,7 @@
 ## Files Checked
 
 ### Source Files (20 modules + 1 binary)
-`config.rs`, `main.rs`, `admin.rs`, `aggregator.rs`, `alerts.rs`, `api.rs`, `audit_chain.rs`, `auditd.rs`, `behavior.rs`, `cognitive.rs`, `falco.rs`, `firewall.rs`, `journald.rs`, `logtamper.rs`, `netpolicy.rs`, `network.rs`, `policy.rs`, `proxy.rs`, `samhain.rs`, `scanner.rs`, `secureclaw.rs`, `sentinel.rs`, `slack.rs`, `tui.rs`, `update.rs`, `bin/clawsudo.rs`
+`config.rs`, `main.rs`, `admin.rs`, `aggregator.rs`, `alerts.rs`, `api.rs`, `audit_chain.rs`, `auditd.rs`, `behavior.rs`, `cognitive.rs`, `falco.rs`, `firewall.rs`, `journald.rs`, `logtamper.rs`, `netpolicy.rs`, `network.rs`, `policy.rs`, `proxy.rs`, `samhain.rs`, `scanner.rs`, `barnacle.rs`, `sentinel.rs`, `slack.rs`, `tui.rs`, `update.rs`, `bin/clawsudo.rs`
 
 ### Documentation Files (12)
 `CLAUDE.md`, `README.md`, `docs/ALERT-PIPELINE.md`, `docs/API.md`, `docs/ARCHITECTURE.md`, `docs/CLAWSUDO-AND-POLICY.md`, `docs/CONFIGURATION.md`, `docs/INSTALL.md`, `docs/MONITORING-SOURCES.md`, `docs/POLICIES.md`, `docs/SECURITY-SCANNERS.md`, `docs/SENTINEL.md`
@@ -50,11 +50,11 @@
 - **docs/CONFIGURATION.md** — All config field names, types, defaults, and required/optional markers match `src/config.rs` exactly
 - **docs/SENTINEL.md** — All defaults (`debounce_ms: 200`, `scan_content: true`, `max_file_size_kb: 1024`, quarantine/shadow dirs) match code
 - **docs/CLAWSUDO-AND-POLICY.md** — PolicyRule struct fields, MatchSpec fields, and clawsudo flow match `src/policy.rs` and `src/bin/clawsudo.rs`
-- **docs/SECURITY-SCANNERS.md** — Scanner function names (`scan_audit_log_health`, `scan_cognitive_integrity`, `scan_secureclaw_patterns`) and descriptions match `src/scanner.rs`, `src/cognitive.rs`, `src/secureclaw.rs`
+- **docs/SECURITY-SCANNERS.md** — Scanner function names (`scan_audit_log_health`, `scan_cognitive_integrity`, `scan_barnacle_patterns`) and descriptions match `src/scanner.rs`, `src/cognitive.rs`, `src/barnacle.rs`
 - **docs/POLICIES.md** — Policy YAML structure matches `PolicyFile`/`PolicyRule`/`MatchSpec` deserialization in `src/policy.rs`
 - **docs/ARCHITECTURE.md** — Module descriptions and data flow accurately reflect the codebase
 - **docs/INSTALL.md** — Installation steps and paths are accurate
 - **Cross-references** — All inter-doc links and anchors resolve correctly (verified: SENTINEL→SECURITY-SCANNERS, MONITORING-SOURCES→ALERT-PIPELINE, etc.)
-- **SecureClaw vendor patterns** — README Contributing section correctly says JSON files (previously fixed)
+- **BarnacleDefense vendor patterns** — README Contributing section correctly says JSON files (previously fixed)
 - **Severity enum** — All docs correctly reference `Critical`, `Warning`, `Info` matching `src/alerts.rs`
 - **API port default** — 18791 in docs matches `default_api_port()` in `src/config.rs`

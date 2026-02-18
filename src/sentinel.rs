@@ -8,7 +8,7 @@
 //! is modified, the change is quarantined and the original is restored from shadow.
 //! Watched (non-protected) files are allowed to change — shadow is updated instead.
 //!
-//! Optionally scans file content against SecureClaw patterns to detect threats
+//! Optionally scans file content against Barnacle patterns to detect threats
 //! injected into watched files.
 
 use std::collections::HashMap;
@@ -23,7 +23,7 @@ use tokio::sync::mpsc;
 use crate::alerts::{Alert, Severity};
 use crate::behavior::check_social_engineering_content;
 use crate::config::{SentinelConfig, WatchPolicy};
-use crate::secureclaw::SecureClawEngine;
+use crate::barnacle::BarnacleEngine;
 
 /// Compute a shadow file path: shadow_dir / hex(sha256(file_path))[..16]
 pub fn shadow_path_for(shadow_dir: &str, file_path: &str) -> PathBuf {
@@ -145,13 +145,13 @@ pub enum SkillIntakeResult {
 ///
 /// Combines two detection layers:
 /// 1. Social engineering content patterns (markdown code blocks, paste URLs, etc.)
-/// 2. SecureClaw pattern engine (injection, dangerous commands, supply chain IOCs)
+/// 2. Barnacle pattern engine (injection, dangerous commands, supply chain IOCs)
 ///
-/// Critical social engineering matches and BLOCK-action SecureClaw matches
+/// Critical social engineering matches and BLOCK-action Barnacle matches
 /// produce `Block`; lower severity matches produce `Warn`.
 pub fn scan_skill_intake(
     content: &str,
-    engine: Option<&SecureClawEngine>,
+    engine: Option<&BarnacleEngine>,
 ) -> SkillIntakeResult {
     // Layer 1: Social engineering content patterns
     if let Some((desc, severity)) = check_social_engineering_content(content) {
@@ -161,7 +161,7 @@ pub fn scan_skill_intake(
         };
     }
 
-    // Layer 2: SecureClaw pattern engine
+    // Layer 2: Barnacle pattern engine
     if let Some(engine) = engine {
         let matches = engine.check_text(content);
         if let Some(m) = matches.first() {
@@ -183,7 +183,7 @@ pub fn scan_skill_intake(
 pub struct Sentinel {
     config: SentinelConfig,
     alert_tx: mpsc::Sender<Alert>,
-    engine: Option<Arc<SecureClawEngine>>,
+    engine: Option<Arc<BarnacleEngine>>,
 }
 
 impl Sentinel {
@@ -193,7 +193,7 @@ impl Sentinel {
     pub fn new(
         config: SentinelConfig,
         alert_tx: mpsc::Sender<Alert>,
-        engine: Option<Arc<SecureClawEngine>>,
+        engine: Option<Arc<BarnacleEngine>>,
     ) -> Result<Self> {
         // Create shadow and quarantine dirs
         std::fs::create_dir_all(&config.shadow_dir)
@@ -365,7 +365,7 @@ impl Sentinel {
     ///
     /// For protected files: quarantines the modified version and restores from shadow.
     /// For watched files: updates the shadow copy and emits an Info alert.
-    /// If content scanning is enabled, runs SecureClaw patterns against the file.
+    /// If content scanning is enabled, runs Barnacle patterns against the file.
     pub async fn handle_change(&self, path: &str) {
         let file_path = Path::new(path);
         if !file_path.exists() {
@@ -482,7 +482,7 @@ impl Sentinel {
 
         // Scan content if enabled — but skip for Watched files (workspace docs like
         // MEMORY.md legitimately contain IPs, paths, credentials references, etc.
-        // that trigger SecureClaw privacy patterns as false positives).
+        // that trigger Barnacle privacy patterns as false positives).
         // Also skip paths matching content_scan_excludes (e.g. OpenClaw auth stores
         // that legitimately contain API keys).
         let mut threat_found = false;
@@ -1150,7 +1150,7 @@ mod tests {
     #[tokio::test]
     async fn test_handle_change_skips_content_scan_for_excluded_path() {
         // Verify that a file matching content_scan_excludes is NOT quarantined
-        // even when it contains content that would trigger SecureClaw patterns.
+        // even when it contains content that would trigger Barnacle patterns.
         let tmp = std::env::temp_dir().join("sentinel_test_exclude");
         let _ = std::fs::remove_dir_all(&tmp);
         let shadow_dir = tmp.join("shadow");
@@ -1188,7 +1188,7 @@ mod tests {
         let sentinel = Sentinel::new(config, tx, None).unwrap();
 
         // Write content with an API key pattern — without exclusion this would
-        // be flagged by SecureClaw if an engine were present. The key point is
+        // be flagged by Barnacle if an engine were present. The key point is
         // that the exclusion path logic is exercised. Since there's no engine
         // in this test, we verify the file is still treated as Protected
         // (quarantine + restore) rather than threat-scanned.
@@ -2481,7 +2481,7 @@ mod tests {
         let _ = rx.try_recv();
 
         // Add ClawTower's guard — should NOT fire critical
-        std::fs::write(&bashrc, "# normal\nexport LD_PRELOAD=/usr/local/lib/libclawguard.so\n").unwrap();
+        std::fs::write(&bashrc, "# normal\nexport LD_PRELOAD=/usr/local/lib/libclawtower.so\n").unwrap();
         sentinel.handle_change(&bashrc.to_string_lossy()).await;
 
         let mut found_ld_preload_crit = false;
@@ -2607,8 +2607,8 @@ mod tests {
     }
 
     #[test]
-    fn test_skill_intake_block_on_secureclaw_match() {
-        use crate::secureclaw::SecureClawEngine;
+    fn test_skill_intake_block_on_barnacle_match() {
+        use crate::barnacle::BarnacleEngine;
         use tempfile::TempDir;
 
         let d = TempDir::new().unwrap();
@@ -2619,7 +2619,7 @@ mod tests {
         std::fs::write(d.path().join("dangerous-commands.json"), r#"{"version":"1.0.0","categories":{}}"#).unwrap();
         std::fs::write(d.path().join("privacy-rules.json"), r#"{"version":"1.0.0","rules":[]}"#).unwrap();
 
-        let engine = SecureClawEngine::load(d.path()).unwrap();
+        let engine = BarnacleEngine::load(d.path()).unwrap();
         // Test string containing the dangerous pattern the IOC engine should catch
         let content = "# Skill\nCode: ev\x61l(user_input)";
         let result = scan_skill_intake(content, Some(&engine));
@@ -2628,7 +2628,7 @@ mod tests {
 
     #[test]
     fn test_skill_intake_pass_with_engine_no_match() {
-        use crate::secureclaw::SecureClawEngine;
+        use crate::barnacle::BarnacleEngine;
         use tempfile::TempDir;
 
         let d = TempDir::new().unwrap();
@@ -2638,7 +2638,7 @@ mod tests {
         std::fs::write(d.path().join("dangerous-commands.json"), r#"{"version":"1.0.0","categories":{}}"#).unwrap();
         std::fs::write(d.path().join("privacy-rules.json"), r#"{"version":"1.0.0","rules":[]}"#).unwrap();
 
-        let engine = SecureClawEngine::load(d.path()).unwrap();
+        let engine = BarnacleEngine::load(d.path()).unwrap();
         let content = "# My Skill\nThis is a safe skill that does nothing dangerous.";
         let result = scan_skill_intake(content, Some(&engine));
         assert_eq!(result, SkillIntakeResult::Pass);
@@ -2762,7 +2762,7 @@ mod tests {
     async fn test_skill_intake_runs_despite_content_scan_exclude() {
         // Verify that the intake scanner fires even when the path matches
         // content_scan_excludes. This is the critical defense-in-depth property:
-        // skills are excluded from generic SecureClaw privacy scanning but still
+        // skills are excluded from generic Barnacle privacy scanning but still
         // pass through the dedicated intake scanner.
         let tmp = std::env::temp_dir().join("sentinel_test_intake_vs_exclude");
         let _ = std::fs::remove_dir_all(&tmp);

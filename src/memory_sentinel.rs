@@ -634,8 +634,8 @@ mod tests {
 7f1234020000-7f1234180000 r-xp 00020000 08:01 2345678  /usr/lib/libc.so.6
 7f1234180000-7f12341d0000 r--p 00180000 08:01 2345678  /usr/lib/libc.so.6
 7f12341d0000-7f12341d4000 rw-p 001d0000 08:01 2345678  /usr/lib/libc.so.6
-7f1234200000-7f1234220000 r-xp 00000000 08:01 3456789  /usr/lib/libclawguard.so
-7f1234220000-7f1234224000 rw-p 00020000 08:01 3456789  /usr/lib/libclawguard.so
+7f1234200000-7f1234220000 r-xp 00000000 08:01 3456789  /usr/lib/libclawtower.so
+7f1234220000-7f1234224000 rw-p 00020000 08:01 3456789  /usr/lib/libclawtower.so
 7ffd12340000-7ffd12360000 rw-p 00000000 00:00 0        [stack]
 7ffd123fe000-7ffd12400000 r--p 00000000 00:00 0        [vvar]
 7ffd12400000-7ffd12402000 r-xp 00000000 00:00 0        [vdso]";
@@ -656,7 +656,7 @@ mod tests {
     fn test_text_regions() {
         let map = MemoryMap::parse_content(SAMPLE_MAPS);
         let text = map.text_regions();
-        // r-xp regions: target .text, libc .text, libclawguard .text, [vdso]
+        // r-xp regions: target .text, libc .text, libclawtower .text, [vdso]
         assert_eq!(text.len(), 4);
         assert!(text[0].path.as_deref() == Some("/usr/bin/target"));
         assert!(text[1].path.as_deref() == Some("/usr/lib/libc.so.6"));
@@ -666,7 +666,7 @@ mod tests {
     fn test_got_plt_regions() {
         let map = MemoryMap::parse_content(SAMPLE_MAPS);
         let got = map.got_plt_regions();
-        // rw-p regions with paths that also have r-xp: target, libc, libclawguard
+        // rw-p regions with paths that also have r-xp: target, libc, libclawtower
         assert_eq!(got.len(), 3);
     }
 
@@ -674,7 +674,7 @@ mod tests {
     fn test_library_regions() {
         let map = MemoryMap::parse_content(SAMPLE_MAPS);
         let libs = map.library_regions();
-        // libc.so.6 (4 regions) + libclawguard.so (2 regions) = 6
+        // libc.so.6 (4 regions) + libclawtower.so (2 regions) = 6
         assert_eq!(libs.len(), 6);
     }
 

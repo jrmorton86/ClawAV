@@ -28,7 +28,7 @@ Check for three markers: `/usr/local/bin/clawtower` + `/etc/clawtower/config.tom
 Minimal prompts:
 1. Show current version vs available version
 2. "Upgrade to vX.Y.Z? [Y/n]"
-3. Stop service → unlock immutable flags → swap binary + clawsudo + tray → update SecureClaw patterns → refresh sudoers allowlist → re-lock → start service
+3. Stop service → unlock immutable flags → swap binary + clawsudo + tray → update BarnacleDefense patterns → refresh sudoers allowlist → re-lock → start service
 4. "Your existing admin key and config are unchanged."
 5. Done.
 

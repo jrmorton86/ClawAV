@@ -63,7 +63,7 @@ Sources (auditd, network, falco, samhain, SSH, firewall, scanner, sentinel, prox
 | `auditd.rs` | Audit log parser (SYSCALL/EXECVE/AVC records), aarch64 syscall table, user filtering |
 | `behavior.rs` | Hardcoded behavioral detection rules (~270 patterns across 6 threat categories) |
 | `cognitive.rs` | Cognitive file protection — SHA-256 baselines for identity files (SOUL.md, etc.) |
-| `secureclaw.rs` | Pattern engine loading 4 JSON databases (injection, dangerous commands, privacy, supply chain) |
+| `barnacle.rs` | Pattern engine loading 4 JSON databases (injection, dangerous commands, privacy, supply chain) |
 | `sentinel.rs` | Real-time file watching via `notify` (inotify), shadow copies, quarantine, content scanning |
 | `scanner.rs` | 30+ periodic security scans (firewall, auditd, SUID, packages, docker, NTP, etc.) |
 | `policy.rs` | YAML-based policy engine for detection (distinct from clawsudo enforcement) |
@@ -131,11 +131,11 @@ Standalone sudo gatekeeper. Fail-secure: no rules → deny all. Exit codes: 0 (o
 
 Config file: `/etc/clawtower/config.toml`. Full reference with all fields, types, and defaults: `docs/CONFIGURATION.md`.
 
-**Config sections:** `general`, `slack`, `auditd`, `network`, `falco`, `samhain`, `ssh`, `api`, `scans`, `proxy`, `policy`, `secureclaw`, `netpolicy`, `sentinel`, `auto_update`.
+**Config sections:** `general`, `slack`, `auditd`, `network`, `falco`, `samhain`, `ssh`, `api`, `scans`, `proxy`, `policy`, `barnacle`, `netpolicy`, `sentinel`, `auto_update`.
 
 **Key methods:** `Config::load(path)`, `Config::save(path)`, `Config::load_with_overrides(base_path, config_d)`
 
-All config section structs are public, `Deserialize + Serialize + Default`. Most in `config.rs`; `SecureClawConfig` in `secureclaw.rs`.
+All config section structs are public, `Deserialize + Serialize + Default`. Most in `config.rs`; `BarnacleDefenseConfig` in `barnacle.rs`.
 
 ---
 
@@ -238,7 +238,7 @@ To add compile-time defaults, modify `SentinelConfig::default()` in `src/config.
 - **Slack threshold**: `min_slack_level` in config
 - **Behavior rule**: Add pattern to constant array in `behavior.rs`, handle in `classify_behavior()`
 - **Safe host**: Add to `SAFE_HOSTS` in `behavior.rs`
-- **Sudo allowlist**: Add to `SecureClawEngine::SUDO_ALLOWLIST` in `secureclaw.rs`
+- **Sudo allowlist**: Add to `BarnacleDefenseEngine::SUDO_ALLOWLIST` in `barnacle.rs`
 - **Policy rule**: Create/edit YAML in `policies/` directory
 
 ### Adding a New TUI Tab

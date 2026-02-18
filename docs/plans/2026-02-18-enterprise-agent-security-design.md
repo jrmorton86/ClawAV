@@ -171,7 +171,7 @@ Directly addresses ClawHavoc. The attack succeeded because ClawHub has no verifi
 When a skill is installed into any path defined in `agent.skill_paths`, sentinel fires an inotify event and triggers a skill intake scan:
 
 - Parse the manifest file (e.g., `SKILL.md`, `package.json`, `pyproject.toml`) — extract declared dependencies, entry points, required permissions
-- Static scan of all skill files against SecureClaw pattern DBs — `supply-chain-ioc.json` already catches code evaluation calls, base64-encoded payloads, known C2 domains
+- Static scan of all skill files against BarnacleDefense pattern DBs — `supply-chain-ioc.json` already catches code evaluation calls, base64-encoded payloads, known C2 domains
 - Check declared permissions against agent profile's allowlist — a "YouTube summarizer" skill requesting filesystem access is suspicious
 - Hash the entire skill directory and store in a local skill manifest ledger (append-only, hash-chained like audit chain)
 
@@ -523,10 +523,10 @@ Acceptance: `agents.d/openclaw.toml` produces identical monitoring behavior to c
 
 **P1.2: Skill intake scanner**
 
-Files: `src/sentinel.rs`, `src/secureclaw.rs`
+Files: `src/sentinel.rs`, `src/barnacle.rs`
 
 - Sentinel triggers intake scan on new files in `agent.skill_paths` directories
-- Parse manifest, static scan against SecureClaw DBs, permission check against profile allowlist
+- Parse manifest, static scan against BarnacleDefense DBs, permission check against profile allowlist
 - Hash skill directory into append-only skill manifest ledger
 - Quarantine action for blocked skills (`/var/lib/clawtower/quarantine/`)
 - New alert source: `supply_chain` with categories `skill_intake_pass`, `skill_intake_warn`, `skill_intake_block`
@@ -586,7 +586,7 @@ Files: `src/proxy.rs`, `src/config.rs`
 
 **P2.4: Signed IOC bundle lifecycle**
 
-Files: `src/update.rs`, `src/secureclaw.rs`
+Files: `src/update.rs`, `src/barnacle.rs`
 
 - IOC databases gain version header + Ed25519 signature
 - Each alert records IOC bundle version

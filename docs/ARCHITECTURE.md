@@ -17,7 +17,7 @@ main.rs
 ├── scanner.rs         (periodic security scans)
 │   └── cognitive.rs   (AI identity file integrity — called by scanner)
 ├── sentinel.rs        (real-time file integrity via inotify)
-├── secureclaw.rs      (vendor threat pattern engine — regex DBs)
+├── barnacle.rs      (vendor threat pattern engine — regex DBs)
 ├── admin.rs           (Unix socket + Argon2 auth)
 ├── firewall.rs        (UFW state monitor)
 ├── logtamper.rs       (audit log tampering detection)
@@ -189,7 +189,7 @@ Any tampering (modified message, deleted entry, reordered entries) breaks the ch
 | **policy engine** | Configurable threats | YAML rules with glob matching and whitelists |
 | **clawsudo** | Unauthorized privilege use | Policy gate before `sudo`, fail-secure default |
 | **LD_PRELOAD** | Syscall execution | Blocks calls at libc level *before* they happen |
-| **sentinel** | Real-time file tampering | inotify + quarantine/restore + SecureClaw content scanning |
+| **sentinel** | Real-time file tampering | inotify + quarantine/restore + BarnacleDefense content scanning |
 | **cognitive** | AI identity drift | SHA-256 baselines of SOUL.md, AGENTS.md, etc. |
 | **aggregator** | Alert fatigue | Dedup + rate limiting without suppressing criticals |
 | **audit chain** | Log tampering | SHA-256 hash chain, append-only |

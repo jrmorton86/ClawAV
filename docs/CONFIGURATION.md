@@ -86,7 +86,7 @@ ClawTower uses a **TOML** configuration file, typically located at `/etc/clawtow
 
 > ⚠️ **TOML only.** Despite the `config.example.yaml` file in the repo root, ClawTower's config parser only reads TOML format. The YAML file is a legacy reference and should not be used directly.
 
-Most sections use `#[serde(default)]` — missing sections gracefully fall back to defaults. However, **five sections are required** and must be present in the config file: `[general]`, `[slack]`, `[auditd]`, `[network]`, and `[scans]`. All other sections (`[falco]`, `[samhain]`, `[api]`, `[proxy]`, `[policy]`, `[secureclaw]`, `[netpolicy]`, `[ssh]`, `[sentinel]`, `[auto_update]`) are optional and have sensible defaults.
+Most sections use `#[serde(default)]` — missing sections gracefully fall back to defaults. However, **five sections are required** and must be present in the config file: `[general]`, `[slack]`, `[auditd]`, `[network]`, and `[scans]`. All other sections (`[falco]`, `[samhain]`, `[api]`, `[proxy]`, `[policy]`, `[barnacle]`, `[netpolicy]`, `[ssh]`, `[sentinel]`, `[auto_update]`) are optional and have sensible defaults.
 
 ---
 
@@ -103,7 +103,7 @@ Most sections use `#[serde(default)]` — missing sections gracefully fall back 
 - [`[scans]`](#scans)
 - [`[proxy]`](#proxy)
 - [`[policy]`](#policy)
-- [`[secureclaw]`](#secureclaw)
+- [`[barnacle]`](#barnacle)
 - [`[netpolicy]`](#netpolicy)
 - [`[behavior]`](#behavior)
 - [`[sentinel]`](#sentinel)
@@ -404,16 +404,16 @@ dir = "./policies"
 
 ---
 
-## `[secureclaw]`
+## `[barnacle]`
 
-**Struct:** `SecureClawConfig`
+**Struct:** `BarnacleDefenseConfig`
 
 Vendor threat pattern engine loading JSON databases.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | `bool` | `false` | Enable SecureClaw pattern matching |
-| `vendor_dir` | `String` | `"./vendor/secureclaw/secureclaw/skill/configs"` | Path to vendor JSON pattern files |
+| `enabled` | `bool` | `false` | Enable BarnacleDefense pattern matching |
+| `vendor_dir` | `String` | `"./vendor/barnacle/barnacle/skill/configs"` | Path to vendor JSON pattern files |
 
 **Expected files in `vendor_dir`:**
 - `injection-patterns.json`
@@ -422,9 +422,9 @@ Vendor threat pattern engine loading JSON databases.
 - `supply-chain-ioc.json`
 
 ```toml
-[secureclaw]
+[barnacle]
 enabled = false
-vendor_dir = "./vendor/secureclaw/secureclaw/skill/configs"
+vendor_dir = "./vendor/barnacle/barnacle/skill/configs"
 ```
 
 ---
@@ -493,7 +493,7 @@ Real-time file integrity monitoring via inotify.
 | `quarantine_dir` | `String` | `"/etc/clawtower/quarantine"` | Where quarantined files are stored |
 | `shadow_dir` | `String` | `"/etc/clawtower/sentinel-shadow"` | Where shadow copies are stored |
 | `debounce_ms` | `u64` | `200` | Milliseconds to debounce filesystem events |
-| `scan_content` | `bool` | `true` | Run SecureClaw pattern scan on changed file contents |
+| `scan_content` | `bool` | `true` | Run BarnacleDefense pattern scan on changed file contents |
 | `max_file_size_kb` | `u64` | `1024` | Maximum file size (KB) for content scanning |
 
 ### `[[sentinel.watch_paths]]`
@@ -698,10 +698,10 @@ port = 18790
 enabled = true
 dir = "./policies"
 
-[secureclaw]
-# SecureClaw vendor threat pattern matching (4 JSON databases)
+[barnacle]
+# BarnacleDefense vendor threat pattern matching (4 JSON databases)
 enabled = false
-vendor_dir = "./vendor/secureclaw/secureclaw/skill/configs"
+vendor_dir = "./vendor/barnacle/barnacle/skill/configs"
 
 [netpolicy]
 # Network policy enforcement for outbound connections
@@ -727,7 +727,7 @@ quarantine_dir = "/etc/clawtower/quarantine"
 shadow_dir = "/etc/clawtower/sentinel-shadow"
 # Debounce window for filesystem events (ms)
 debounce_ms = 200
-# Run SecureClaw patterns on changed content
+# Run BarnacleDefense patterns on changed content
 scan_content = true
 # Skip files larger than this (KB)
 max_file_size_kb = 1024

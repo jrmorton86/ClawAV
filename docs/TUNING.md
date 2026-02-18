@@ -187,7 +187,7 @@ Add compiler toolchain to behavior allowlist. In config or code:
 sec_tamper_exclude_commands = ["collect2", "ld", "cc1", "as", "rustc", "cargo"]
 ```
 
-Or if behavior rules are in the secureclaw vendor module, add an exclusion there.
+Or if behavior rules are in the barnacle vendor module, add an exclusion there.
 
 ### Expected Impact
 Eliminates **~22 Warning alerts/18h**.
