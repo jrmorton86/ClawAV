@@ -165,6 +165,53 @@ fn run_cmd_with_sudo(cmd: &str, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+fn command_available(cmd: &str) -> bool {
+    match run_cmd("which", &[cmd]) {
+        Ok(output) => !output.trim().is_empty(),
+        Err(_) => false,
+    }
+}
+
+fn detect_agent_username() -> String {
+    std::env::var("CLAWTOWER_AGENT_USER")
+        .or_else(|_| std::env::var("OPENCLAW_USER"))
+        .unwrap_or_else(|_| "openclaw".to_string())
+}
+
+fn user_home_from_passwd(username: &str) -> Option<String> {
+    let passwd = std::fs::read_to_string("/etc/passwd").ok()?;
+    for line in passwd.lines() {
+        let fields: Vec<&str> = line.split(':').collect();
+        if fields.len() >= 6 && fields[0] == username {
+            return Some(fields[5].to_string());
+        }
+    }
+    None
+}
+
+fn detect_agent_home() -> String {
+    let username = detect_agent_username();
+    user_home_from_passwd(&username)
+        .or_else(|| std::env::var("HOME").ok())
+        .unwrap_or_else(|| format!("/home/{}", username))
+}
+
+fn detect_primary_package_manager() -> Option<&'static str> {
+    if command_available("apt") {
+        Some("apt")
+    } else if command_available("dnf") {
+        Some("dnf")
+    } else if command_available("yum") {
+        Some("yum")
+    } else if command_available("zypper") {
+        Some("zypper")
+    } else if command_available("pacman") {
+        Some("pacman")
+    } else {
+        None
+    }
+}
+
 // --- Individual scan functions ---
 
 /// Audit user and system crontabs for suspicious entries (wget, curl, nc, base64, etc.).
@@ -408,11 +455,25 @@ pub fn scan_password_policy() -> ScanResult {
         issues.push("Cannot read /etc/login.defs".to_string());
     }
 
-    // Check PAM password requirements
-    if let Ok(content) = std::fs::read_to_string("/etc/pam.d/common-password") {
-        if !content.contains("pam_pwquality") && !content.contains("pam_cracklib") {
-            issues.push("No password quality checking configured".to_string());
+    // Check PAM password requirements (distro-dependent paths)
+    let pam_candidates = [
+        "/etc/pam.d/common-password",   // Debian/Ubuntu
+        "/etc/pam.d/system-auth",       // RHEL/Amazon Linux/Fedora
+        "/etc/pam.d/password-auth",     // RHEL-family split config
+    ];
+    let mut pam_checked = false;
+    let mut pam_quality_found = false;
+    for path in &pam_candidates {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            pam_checked = true;
+            if content.contains("pam_pwquality") || content.contains("pam_cracklib") {
+                pam_quality_found = true;
+                break;
+            }
         }
+    }
+    if pam_checked && !pam_quality_found {
+        issues.push("No password quality checking configured in PAM".to_string());
     }
 
     if issues.is_empty() {
@@ -553,11 +614,15 @@ pub fn scan_failed_login_attempts() -> ScanResult {
         }
     }
 
-    // Check auth.log if it exists
-    if let Ok(output) = run_cmd("grep", &["-c", "Failed password", "/var/log/auth.log"]) {
-        if let Ok(count) = output.trim().parse::<u32>() {
-            if count > 100 {
-                issues.push(format!("High auth failures in auth.log: {}", count));
+    // Check distro-specific auth logs if present
+    for log_path in ["/var/log/auth.log", "/var/log/secure"] {
+        if std::path::Path::new(log_path).exists() {
+            if let Ok(output) = run_cmd("grep", &["-c", "Failed password", log_path]) {
+                if let Ok(count) = output.trim().parse::<u32>() {
+                    if count > 100 {
+                        issues.push(format!("High auth failures in {}: {}", log_path, count));
+                    }
+                }
             }
         }
     }
@@ -809,7 +874,10 @@ pub fn scan_ld_preload_persistence() -> ScanResult {
             .collect()
     } else {
         // Fallback
-        vec!["/home/openclaw".to_string(), "/root".to_string()]
+        let mut homes = vec![detect_agent_home(), "/root".to_string()];
+        homes.sort();
+        homes.dedup();
+        homes
     };
 
     for home in &home_dirs {
@@ -1049,6 +1117,7 @@ pub fn scan_systemd_hardening() -> ScanResult {
 /// Audit user accounts: non-root UID 0 users, passwordless shell accounts, and excessive sudo group members.
 pub fn scan_user_account_audit() -> ScanResult {
     let mut issues = Vec::new();
+    let watched_user = detect_agent_username();
 
     // Check for users with UID 0 (root privileges)
     if let Ok(passwd_content) = std::fs::read_to_string("/etc/passwd") {
@@ -1128,8 +1197,8 @@ pub fn scan_user_account_audit() -> ScanResult {
                 let group_name = fields[0];
                 if DANGEROUS_GROUPS.contains(&group_name) {
                     let members: Vec<&str> = fields[3].split(',').filter(|s| !s.is_empty()).collect();
-                    if members.contains(&"openclaw") {
-                        issues.push(format!("openclaw in dangerous group '{}' (privilege escalation vector)", group_name));
+                    if members.iter().any(|m| *m == watched_user) {
+                        issues.push(format!("{} in dangerous group '{}' (privilege escalation vector)", watched_user, group_name));
                     }
                 }
             }
@@ -1151,10 +1220,58 @@ pub fn scan_user_account_audit() -> ScanResult {
 
 /// Check UFW firewall status and rule count.
 pub fn scan_firewall() -> ScanResult {
-    match run_cmd_with_sudo("ufw", &["status", "verbose"]) {
-        Ok(output) => parse_ufw_status(&output),
-        Err(e) => ScanResult::new("firewall", ScanStatus::Fail, &format!("Cannot check firewall: {}", e)),
+    if command_available("ufw") {
+        return match run_cmd_with_sudo("ufw", &["status", "verbose"]) {
+            Ok(output) => parse_ufw_status(&output),
+            Err(e) => ScanResult::new("firewall", ScanStatus::Fail, &format!("Cannot check UFW firewall: {}", e)),
+        };
     }
+
+    if command_available("firewall-cmd") {
+        return match run_cmd_with_sudo("firewall-cmd", &["--state"]) {
+            Ok(state) if state.trim() == "running" => {
+                let zones = run_cmd_with_sudo("firewall-cmd", &["--list-all-zones"]).unwrap_or_default();
+                let has_rules = zones.contains("services:") || zones.contains("ports:") || zones.contains("rich rules:");
+                if has_rules {
+                    ScanResult::new("firewall", ScanStatus::Pass, "firewalld running with configured zones/rules")
+                } else {
+                    ScanResult::new("firewall", ScanStatus::Warn, "firewalld running but no obvious rules/services configured")
+                }
+            }
+            Ok(_) => ScanResult::new("firewall", ScanStatus::Fail, "firewalld installed but not running"),
+            Err(e) => ScanResult::new("firewall", ScanStatus::Warn, &format!("Cannot query firewalld: {}", e)),
+        };
+    }
+
+    if command_available("nft") {
+        return match run_cmd_with_sudo("nft", &["list", "ruleset"]) {
+            Ok(output) => {
+                let chain_count = output.lines().filter(|l| l.trim_start().starts_with("chain ")).count();
+                if chain_count > 0 {
+                    ScanResult::new("firewall", ScanStatus::Pass, &format!("nftables active with {} chains", chain_count))
+                } else {
+                    ScanResult::new("firewall", ScanStatus::Warn, "nftables available but no chains/rules found")
+                }
+            }
+            Err(e) => ScanResult::new("firewall", ScanStatus::Warn, &format!("Cannot query nftables ruleset: {}", e)),
+        };
+    }
+
+    if command_available("iptables") {
+        return match run_cmd_with_sudo("iptables", &["-S"]) {
+            Ok(output) => {
+                let rules = output.lines().filter(|l| l.starts_with("-A ")).count();
+                if rules > 0 {
+                    ScanResult::new("firewall", ScanStatus::Pass, &format!("iptables active with {} rules", rules))
+                } else {
+                    ScanResult::new("firewall", ScanStatus::Warn, "iptables available but no rules found")
+                }
+            }
+            Err(e) => ScanResult::new("firewall", ScanStatus::Warn, &format!("Cannot query iptables rules: {}", e)),
+        };
+    }
+
+    ScanResult::new("firewall", ScanStatus::Warn, "No supported firewall backend detected (ufw/firewalld/nftables/iptables)")
 }
 
 /// Parse `ufw status verbose` output into a scan result (testable helper).
@@ -1260,16 +1377,34 @@ fn compute_file_sha256(path: &str) -> Result<String, String> {
 
 /// Check for pending system package updates via `apt list --upgradable`.
 pub fn scan_updates() -> ScanResult {
-    match run_cmd("bash", &["-c", "apt list --upgradable 2>/dev/null | tail -n +2 | wc -l"]) {
-        Ok(output) => {
-            let count: u32 = output.trim().parse().unwrap_or(0);
+    let manager = match detect_primary_package_manager() {
+        Some(m) => m,
+        None => return ScanResult::new("updates", ScanStatus::Warn, "No supported package manager found (apt/dnf/yum/zypper/pacman)"),
+    };
+
+    let result = match manager {
+        "apt" => run_cmd("bash", &["-c", "apt list --upgradable 2>/dev/null | tail -n +2 | wc -l"])
+            .map(|s| s.trim().parse::<u32>().unwrap_or(0)),
+        "dnf" => run_cmd("bash", &["-c", "dnf -q list updates 2>/dev/null | grep -E '^[A-Za-z0-9_.+-]+' | wc -l"])
+            .map(|s| s.trim().parse::<u32>().unwrap_or(0)),
+        "yum" => run_cmd("bash", &["-c", "yum -q check-update 2>/dev/null | grep -E '^[A-Za-z0-9_.+-]+' | wc -l"])
+            .map(|s| s.trim().parse::<u32>().unwrap_or(0)),
+        "zypper" => run_cmd("bash", &["-c", "zypper -q list-updates 2>/dev/null | grep -E '^[iv| ]*[A-Za-z0-9_.+-]+' | wc -l"])
+            .map(|s| s.trim().parse::<u32>().unwrap_or(0)),
+        "pacman" => run_cmd("bash", &["-c", "pacman -Qu 2>/dev/null | wc -l"])
+            .map(|s| s.trim().parse::<u32>().unwrap_or(0)),
+        _ => Err("Unsupported package manager".to_string()),
+    };
+
+    match result {
+        Ok(count) => {
             if count > 10 {
-                ScanResult::new("updates", ScanStatus::Warn, &format!("{} pending system updates", count))
+                ScanResult::new("updates", ScanStatus::Warn, &format!("{} pending system updates ({})", count, manager))
             } else {
-                ScanResult::new("updates", ScanStatus::Pass, &format!("{} pending updates", count))
+                ScanResult::new("updates", ScanStatus::Pass, &format!("{} pending updates ({})", count, manager))
             }
         }
-        Err(e) => ScanResult::new("updates", ScanStatus::Warn, &format!("Cannot check updates: {}", e)),
+        Err(e) => ScanResult::new("updates", ScanStatus::Warn, &format!("Cannot check updates with {}: {}", manager, e)),
     }
 }
 
@@ -1463,7 +1598,7 @@ pub fn scan_user_persistence() -> Vec<ScanResult> {
 /// Inner implementation with optional crontab override for testing.
 fn scan_user_persistence_inner(crontab_override: Option<&str>) -> Vec<ScanResult> {
     let mut results = Vec::new();
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/openclaw".to_string());
+    let home = detect_agent_home();
 
     // 1. Crontab entries
     let crontab_output = match crontab_override {
@@ -1574,9 +1709,9 @@ fn scan_user_persistence_inner(crontab_override: Option<&str>) -> Vec<ScanResult
 
     // 5. Git hooks in workspace
     {
-        let hooks_dir = "/home/openclaw/.openclaw/workspace/.git/hooks";
+        let hooks_dir = format!("{}/.openclaw/workspace/.git/hooks", home);
         let mut non_sample = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(hooks_dir) {
+        if let Ok(entries) = std::fs::read_dir(&hooks_dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if !name.ends_with(".sample") {
@@ -1816,14 +1951,18 @@ pub fn scan_apparmor_protection() -> ScanResult {
 /// Check the age of the SecureClaw vendor pattern database via its git log.
 pub fn scan_secureclaw_sync() -> ScanResult {
     // Try configured path first, then common locations
-    let candidates = [
-        "/home/openclaw/.openclaw/workspace/openclawtower/vendor/secureclaw",
-        "vendor/secureclaw",
-        "/opt/clawtower/vendor/secureclaw",
+    let agent_home = detect_agent_home();
+    let mut candidates = vec![
+        format!("{}/.openclaw/workspace/openclawtower/vendor/secureclaw", agent_home),
+        "vendor/secureclaw".to_string(),
+        "/opt/clawtower/vendor/secureclaw".to_string(),
     ];
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("vendor/secureclaw").display().to_string());
+    }
     let vendor_path = candidates.iter()
         .find(|p| std::path::Path::new(p).exists())
-        .copied()
+        .map(String::as_str)
         .unwrap_or("vendor/secureclaw");
     
     if !std::path::Path::new(vendor_path).exists() {
@@ -1880,6 +2019,8 @@ impl SecurityScanner {
     /// swap/tmpfs, environment variables, packages, core dumps, network interfaces,
     /// systemd hardening, user accounts, cognitive integrity, and OpenClaw-specific checks.
     pub fn run_all_scans_with_config(openclaw_config: &crate::config::OpenClawConfig) -> Vec<ScanResult> {
+        let agent_home = detect_agent_home();
+        let workspace_path = format!("{}/.openclaw/workspace", agent_home);
         let mut results = vec![
             scan_firewall(),
             scan_auditd(),
@@ -1926,7 +2067,7 @@ impl SecurityScanner {
             std::path::Path::new("/etc/clawtower/secureclaw")
         ).ok();
         results.extend(scan_cognitive_integrity(
-            std::path::Path::new("/home/openclaw/.openclaw/workspace"),
+            std::path::Path::new(&workspace_path),
             std::path::Path::new("/etc/clawtower/cognitive-baselines.sha256"),
             secureclaw_engine.as_ref(),
         ));
@@ -2287,9 +2428,10 @@ fn scan_openclaw_running_as_root() -> ScanResult {
 /// Keys should be loaded via environment variables at runtime, never stored
 /// in config files where they can be leaked in logs, backups, or version control.
 fn scan_openclaw_hardcoded_secrets() -> ScanResult {
+    let state_dir = format!("{}/.openclaw", detect_agent_home());
     let config_paths = [
-        "/home/openclaw/.openclaw/openclaw.json",
-        "/home/openclaw/.openclaw/agents/main/agent/gateway.yaml",
+        format!("{}/openclaw.json", state_dir),
+        format!("{}/agents/main/agent/gateway.yaml", state_dir),
     ];
 
     // Patterns that indicate hardcoded API keys (prefix + min length)
@@ -2444,11 +2586,12 @@ fn scan_openclaw_credential_audit() -> ScanResult {
 
 fn scan_openclaw_security() -> Vec<ScanResult> {
     let mut results = Vec::new();
+    let state_dir = format!("{}/.openclaw", detect_agent_home());
 
     // Check OpenClaw gateway config (JSON format in openclaw.json)
     let config_paths = [
-        "/home/openclaw/.openclaw/openclaw.json",
-        "/home/openclaw/.openclaw/agents/main/agent/gateway.yaml",
+        format!("{}/openclaw.json", state_dir),
+        format!("{}/agents/main/agent/gateway.yaml", state_dir),
     ];
     let gateway_config = config_paths.iter()
         .find(|p| std::path::Path::new(p).exists())
@@ -2505,8 +2648,7 @@ fn scan_openclaw_security() -> Vec<ScanResult> {
     }
 
     // Permission checks (from OpenClaw security docs)
-    let state_dir = "/home/openclaw/.openclaw";
-    results.push(check_path_permissions(state_dir, 0o700, "state_dir"));
+    results.push(check_path_permissions(&state_dir, 0o700, "state_dir"));
     results.push(check_path_permissions(
         &format!("{}/openclaw.json", state_dir), 0o600, "config"));
     results.push(check_path_permissions(
@@ -2542,7 +2684,7 @@ fn scan_openclaw_security() -> Vec<ScanResult> {
     }
 
     // Symlink safety check
-    results.push(check_symlinks_in_dir(state_dir));
+    results.push(check_symlinks_in_dir(&state_dir));
 
     // ── 4. Access via Tailscale/SSH tunnel ───────────────────────────────
     // Check if Tailscale is running

@@ -4,8 +4,13 @@
 
 set -euo pipefail
 
-WATCHED_USER="openclaw"
+WATCHED_USER="${CLAWTOWER_WATCHED_USER:-${OPENCLAW_USER:-openclaw}}"
 WATCHED_UID=$(id -u "$WATCHED_USER" 2>/dev/null || echo "")
+WATCHED_HOME=$(getent passwd "$WATCHED_USER" 2>/dev/null | cut -d: -f6)
+
+if [ -z "$WATCHED_HOME" ]; then
+    WATCHED_HOME="/home/$WATCHED_USER"
+fi
 
 if [ -z "$WATCHED_UID" ]; then
     echo "ERROR: User '$WATCHED_USER' not found"
@@ -35,7 +40,16 @@ echo "Using syscalls for file permission monitoring: $PERM_SYSCALLS"
 
 # Install auditd if not present
 if ! command -v auditctl &>/dev/null; then
-    apt-get update && apt-get install -y auditd
+    if command -v apt-get &>/dev/null; then
+        apt-get update && apt-get install -y auditd
+    elif command -v dnf &>/dev/null; then
+        dnf install -y audit
+    elif command -v yum &>/dev/null; then
+        yum install -y audit
+    else
+        echo "ERROR: Could not find apt-get/dnf/yum to install auditd"
+        exit 1
+    fi
 fi
 
 # Build the -S flags for permission syscalls
@@ -72,13 +86,13 @@ cat > /etc/audit/rules.d/clawtower.rules << EOF
 -a always,exit -F arch=b64 -S init_module -S finit_module -k clawtower_module
 
 # Monitor credential file reads (exfiltration / recon)
--w /home/openclaw/.openclaw/agents/main/agent/auth-profiles.json -p r -k clawtower_cred_read
--w /home/openclaw/.aws/credentials -p r -k clawtower_cred_read
--w /home/openclaw/.aws/config -p r -k clawtower_cred_read
--w /home/openclaw/.ssh/id_ed25519 -p r -k clawtower_cred_read
--w /home/openclaw/.ssh/id_rsa -p r -k clawtower_cred_read
--w /home/openclaw/.env -p r -k clawtower_cred_read
--w /home/openclaw/.openclaw/gateway.yaml -p r -k clawtower_cred_read
+-w $WATCHED_HOME/.openclaw/agents/main/agent/auth-profiles.json -p r -k clawtower_cred_read
+-w $WATCHED_HOME/.aws/credentials -p r -k clawtower_cred_read
+-w $WATCHED_HOME/.aws/config -p r -k clawtower_cred_read
+-w $WATCHED_HOME/.ssh/id_ed25519 -p r -k clawtower_cred_read
+-w $WATCHED_HOME/.ssh/id_rsa -p r -k clawtower_cred_read
+-w $WATCHED_HOME/.env -p r -k clawtower_cred_read
+-w $WATCHED_HOME/.openclaw/gateway.yaml -p r -k clawtower_cred_read
 EOF
 
 # Reload rules

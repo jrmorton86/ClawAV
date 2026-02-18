@@ -264,6 +264,7 @@ fn apply_rlimit_fallback(limits: &ResourceLimits) -> CageResult<()> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetIsolationMethod {
     Namespace,
+    Nftables,
     Iptables,
 }
 
@@ -272,13 +273,32 @@ pub fn isolate_network(pid: i32, caps: &PlatformCapabilities) -> CageResult<NetI
     if caps.network_namespaces {
         match isolate_via_netns(pid) {
             Ok(()) => return Ok(NetIsolationMethod::Namespace),
-            Err(e) => eprintln!("[cage] netns isolation failed: {} — trying iptables", e),
+            Err(e) => eprintln!("[cage] netns isolation failed: {} — trying nftables/iptables", e),
         }
     }
 
-    // Fallback: iptables DROP rules for the process's UID
+    // Fallback: nftables/iptables DROP rules for the process's UID
+    if command_exists("nft") {
+        match isolate_via_nftables(pid) {
+            Ok(()) => return Ok(NetIsolationMethod::Nftables),
+            Err(e) => eprintln!("[cage] nftables isolation failed: {} — trying iptables", e),
+        }
+    }
+
+    if !command_exists("iptables") {
+        return Err(CageError::NoCap("no supported packet filter backend (nft/iptables)".into()));
+    }
+
     isolate_via_iptables(pid)?;
     Ok(NetIsolationMethod::Iptables)
+}
+
+fn command_exists(cmd: &str) -> bool {
+    Command::new("which")
+        .arg(cmd)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 /// Select which isolation method would be used (for testing/dry-run).
@@ -357,6 +377,49 @@ fn isolate_via_iptables(pid: i32) -> CageResult<()> {
     }
 
     eprintln!("[cage] iptables DROP for UID {} (pid {})", uid, pid);
+    Ok(())
+}
+
+fn isolate_via_nftables(pid: i32) -> CageResult<()> {
+    // Read UID of the target process
+    let status_path = format!("/proc/{}/status", pid);
+    let status_content = fs::read_to_string(&status_path)
+        .map_err(|e| CageError::Network(format!("cannot read {}: {}", status_path, e)))?;
+
+    let uid = status_content
+        .lines()
+        .find(|l| l.starts_with("Uid:"))
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|s| s.parse::<u32>().ok())
+        .ok_or_else(|| CageError::Network("cannot determine UID".into()))?;
+
+    // Ensure table/chain exist (ignore already-exists errors)
+    let _ = Command::new("nft")
+        .args(["add", "table", "inet", "clawtower_cage"])
+        .status();
+
+    let _ = Command::new("bash")
+        .args([
+            "-c",
+            "nft add chain inet clawtower_cage output '{ type filter hook output priority 0 ; policy accept ; }'",
+        ])
+        .status();
+
+    let comment = format!("clawtower_cage_{}", pid);
+    let status = Command::new("nft")
+        .args([
+            "add", "rule", "inet", "clawtower_cage", "output",
+            "meta", "skuid", &uid.to_string(),
+            "drop", "comment", &comment,
+        ])
+        .status()
+        .map_err(|e| CageError::Network(format!("nft: {}", e)))?;
+
+    if !status.success() {
+        return Err(CageError::Network("nftables DROP rule failed".into()));
+    }
+
+    eprintln!("[cage] nftables DROP for UID {} (pid {})", uid, pid);
     Ok(())
 }
 

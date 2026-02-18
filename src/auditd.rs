@@ -157,6 +157,89 @@ fn syscall_name_aarch64(num: u32) -> &'static str {
     }
 }
 
+/// Map x86_64 syscall numbers to names.
+///
+/// This table focuses on security-relevant syscalls ClawTower classifies today.
+fn syscall_name_x86_64(num: u32) -> &'static str {
+    match num {
+        0 => "read",
+        1 => "write",
+        2 => "open",
+        3 => "close",
+        9 => "mmap",
+        10 => "mprotect",
+        21 => "access",
+        35 => "nanosleep",
+        39 => "getpid",
+        40 => "sendfile",
+        41 => "socket",
+        42 => "connect",
+        43 => "accept",
+        44 => "sendto",
+        45 => "recvfrom",
+        46 => "sendmsg",
+        47 => "recvmsg",
+        49 => "bind",
+        50 => "listen",
+        52 => "getpeername",
+        53 => "socketpair",
+        54 => "setsockopt",
+        55 => "getsockopt",
+        56 => "clone",
+        57 => "fork",
+        58 => "vfork",
+        59 => "execve",
+        60 => "exit",
+        61 => "wait4",
+        62 => "kill",
+        72 => "fcntl",
+        79 => "getcwd",
+        89 => "readlink",
+        96 => "gettimeofday",
+        101 => "ptrace",
+        158 => "arch_prctl",
+        186 => "gettid",
+        202 => "futex",
+        217 => "getdents64",
+        231 => "exit_group",
+        257 => "openat",
+        262 => "newfstatat",
+        263 => "unlinkat",
+        265 => "readlinkat",
+        268 => "fchmodat",
+        292 => "dup3",
+        298 => "perf_event_open",
+        319 => "memfd_create",
+        322 => "execveat",
+        326 => "copy_file_range",
+        332 => "statx",
+        _ => "unknown",
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuditArch {
+    Aarch64,
+    X86_64,
+    Other,
+}
+
+fn parse_audit_arch(line: &str) -> AuditArch {
+    match extract_field(line, "arch") {
+        Some("c00000b7") => AuditArch::Aarch64,
+        Some("c000003e") => AuditArch::X86_64,
+        _ => AuditArch::Other,
+    }
+}
+
+fn syscall_name_for_arch(num: u32, arch: AuditArch) -> &'static str {
+    match arch {
+        AuditArch::Aarch64 => syscall_name_aarch64(num),
+        AuditArch::X86_64 => syscall_name_x86_64(num),
+        AuditArch::Other => "unknown",
+    }
+}
+
 /// Extract a key=value field from an audit log line.
 ///
 /// Splits on whitespace, finds the token starting with `field=`, and returns
@@ -284,10 +367,11 @@ pub fn parse_to_event(line: &str, watched_users: Option<&[String]>) -> Option<Pa
     }
 
     if line.contains("type=SYSCALL") {
+        let arch = parse_audit_arch(line);
         let syscall_num = extract_field(line, "syscall")
             .and_then(|s| s.parse::<u32>().ok())
             .unwrap_or(0);
-        let name = syscall_name_aarch64(syscall_num).to_string();
+        let name = syscall_name_for_arch(syscall_num, arch).to_string();
         let success = extract_field(line, "success").unwrap_or("no") == "yes";
 
         // Try to extract file path from name= field or exe= field
@@ -793,6 +877,31 @@ mod tests {
         assert_eq!(syscall_name_aarch64(203), "connect");
         assert_eq!(syscall_name_aarch64(35), "unlinkat");
         assert_eq!(syscall_name_aarch64(9999), "unknown");
+        assert_eq!(syscall_name_x86_64(59), "execve");
+        assert_eq!(syscall_name_x86_64(257), "openat");
+        assert_eq!(syscall_name_x86_64(42), "connect");
+        assert_eq!(syscall_name_x86_64(326), "copy_file_range");
+        assert_eq!(syscall_name_x86_64(9999), "unknown");
+    }
+
+    #[test]
+    fn test_parse_audit_arch_values() {
+        let aarch64 = r#"type=SYSCALL msg=audit(1): arch=c00000b7 syscall=56"#;
+        let x86_64 = r#"type=SYSCALL msg=audit(1): arch=c000003e syscall=257"#;
+        let unknown = r#"type=SYSCALL msg=audit(1): arch=deadbeef syscall=1"#;
+
+        assert_eq!(parse_audit_arch(aarch64), AuditArch::Aarch64);
+        assert_eq!(parse_audit_arch(x86_64), AuditArch::X86_64);
+        assert_eq!(parse_audit_arch(unknown), AuditArch::Other);
+    }
+
+    #[test]
+    fn test_parse_x86_64_syscall_line() {
+        let line = r#"type=SYSCALL msg=audit(1707849600.123:456): arch=c000003e syscall=257 success=yes uid=1000 name="/etc/shadow""#;
+        let event = parse_to_event(line, Some(&["1000".to_string()])).unwrap();
+        assert_eq!(event.syscall_name, "openat");
+        assert!(event.success);
+        assert_eq!(event.file_path.as_deref(), Some("/etc/shadow"));
     }
 
     #[test]
