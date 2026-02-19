@@ -495,4 +495,14 @@ mod tests {
             other => panic!("Expected Pass for empty body, got {:?}", std::mem::discriminant(&other)),
         }
     }
+
+    #[test]
+    fn test_full_pattern_db_loads() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/patterns/prompt-firewall-patterns.json");
+        if std::path::Path::new(path).exists() {
+            let fw = PromptFirewall::load(path, 2, &HashMap::new()).unwrap();
+            assert!(fw.total_patterns() >= 40, "Expected 40+ patterns, got {}", fw.total_patterns());
+            assert_eq!(fw.category_count(), 5, "Expected all 5 categories");
+        }
+    }
 }
