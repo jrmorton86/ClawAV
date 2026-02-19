@@ -11,19 +11,23 @@
 //! Matches can trigger blocking (SSN, AWS keys) or redaction (credit cards).
 
 use crate::alerts::{Alert, Severity};
-use crate::config::{KeyMapping, ProxyConfig};
+use crate::config::{KeyMapping, ProxyConfig, PromptFirewallConfig};
+use crate::prompt_firewall::{PromptFirewall, FirewallResult};
 use anyhow::Result;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Client, Request, Response, Server, StatusCode, Uri};
 use regex::Regex;
 use std::net::SocketAddr;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 struct ProxyState {
     key_mappings: Vec<KeyMapping>,
+    credential_states: HashMap<String, CredentialState>,
     dlp_patterns: Vec<CompiledDlpPattern>,
+    prompt_firewall: PromptFirewall,
     alert_tx: mpsc::Sender<Alert>,
 }
 
@@ -59,8 +63,14 @@ impl ProxyServer {
             })
             .collect();
 
+        let mut credential_states = HashMap::new();
+        for mapping in &self.config.key_mapping {
+            credential_states.insert(mapping.virtual_key.clone(), CredentialState::new(mapping));
+        }
+
         let state = Arc::new(ProxyState {
             key_mappings: self.config.key_mapping.clone(),
+            credential_states,
             dlp_patterns: compiled_patterns,
             alert_tx: self.alert_tx,
         });
@@ -261,6 +271,24 @@ async fn handle_request(
     let real_key = real_key.to_string();
     let provider = provider.to_string();
     let upstream = upstream.to_string();
+
+    // Check credential scoping (TTL, path restriction, revocation)
+    if let Some(cred_state) = state.credential_states.get(&virtual_key) {
+        let mapping = state.key_mappings.iter().find(|m| m.virtual_key == virtual_key).unwrap();
+        let request_path = req.uri().path();
+        if let Err(reason) = check_credential_access(mapping, cred_state, request_path) {
+            let _ = state.alert_tx.send(Alert::new(
+                Severity::Warning,
+                "proxy",
+                &format!("Credential access denied for {}: {}", virtual_key, reason),
+            )).await;
+            return Ok(Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .header("Content-Type", "application/json")
+                .body(Body::from(format!(r#"{{"error":"credential denied: {}"}}"#, reason)))
+                .unwrap());
+        }
+    }
 
     // Read body for DLP scanning
     let (parts, body) = req.into_parts();
@@ -750,6 +778,58 @@ mod tests {
         assert!(check_credential_access(&mapping, &state, "/v1/messages").is_ok());
         assert!(check_credential_access(&mapping, &state, "/v1/completions").is_ok());
         assert!(check_credential_access(&mapping, &state, "/anything/at/all").is_ok());
+    }
+
+    // ═══════════════════════ CREDENTIAL WIRING TESTS ═══════════════════════
+
+    #[test]
+    fn test_credential_expired_key_denied() {
+        let mapping = KeyMapping {
+            virtual_key: "vk-expired".to_string(),
+            real: "sk-REAL".to_string(),
+            provider: "anthropic".to_string(),
+            upstream: "https://api.anthropic.com".to_string(),
+            ttl_secs: Some(0),
+            allowed_paths: vec![],
+            revoke_at_risk: 0.0,
+        };
+        let state = CredentialState::new(&mapping);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        let result = check_credential_access(&mapping, &state, "/v1/messages");
+        assert!(result.is_err(), "Expired credential must be denied");
+    }
+
+    #[test]
+    fn test_credential_path_scoping_enforced() {
+        let mapping = KeyMapping {
+            virtual_key: "vk-scoped".to_string(),
+            real: "sk-REAL".to_string(),
+            provider: "anthropic".to_string(),
+            upstream: "https://api.anthropic.com".to_string(),
+            ttl_secs: Some(3600),
+            allowed_paths: vec!["/v1/messages".to_string()],
+            revoke_at_risk: 0.0,
+        };
+        let state = CredentialState::new(&mapping);
+        assert!(check_credential_access(&mapping, &state, "/v1/messages").is_ok());
+        assert!(check_credential_access(&mapping, &state, "/v1/completions").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_handle_request_respects_path_scope() {
+        let mapping = KeyMapping {
+            virtual_key: "vk-test".to_string(),
+            real: "sk-REAL".to_string(),
+            provider: "anthropic".to_string(),
+            upstream: "https://api.anthropic.com".to_string(),
+            ttl_secs: Some(3600),
+            allowed_paths: vec!["/v1/messages".to_string()],
+            revoke_at_risk: 0.0,
+        };
+        let state = CredentialState::new(&mapping);
+        let result = check_credential_access(&mapping, &state, "/v1/completions");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not in allowed paths"));
     }
 
     // ═══════════════════════ TLS CONNECTOR TESTS ═══════════════════════
