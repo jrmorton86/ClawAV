@@ -191,15 +191,40 @@ pub fn generate_and_show_admin_key(hash_path: &Path) -> Result<bool> {
             .status();
     }
 
+    // Key is always 69 chars: "OCAV-" (5) + 64 hex digits
+    const W: usize = 73; // inner width: 2-pad + 69-key + 2-pad
+    let bar: String = "═".repeat(W);
+    let pad: String = " ".repeat(W);
+    let title = "ADMIN KEY GENERATED -- SAVE THIS NOW, IT WILL NOT BE SHOWN AGAIN:";
+    let hint  = "Store in your password manager or write it down.";
+
     eprintln!();
-    eprintln!("╔══════════════════════════════════════════════════════════════╗");
-    eprintln!("║  ADMIN KEY GENERATED — SAVE THIS NOW, IT WILL NOT BE       ║");
-    eprintln!("║  SHOWN AGAIN:                                              ║");
-    eprintln!("║                                                             ║");
-    eprintln!("║  {}  ║", display_key);
-    eprintln!("║                                                             ║");
-    eprintln!("║  Store in your password manager or write it down.           ║");
-    eprintln!("╚══════════════════════════════════════════════════════════════╝");
+    eprintln!("╔{bar}╗");
+    eprintln!("║  {title:<w$}║", w = W - 2);
+    eprintln!("║{pad}║");
+    eprintln!("║  {display_key}  ║");
+    eprintln!("║{pad}║");
+    eprintln!("║  {hint:<w$}║", w = W - 2);
+    eprintln!("╚{bar}╝");
+    eprintln!();
+
+    // Force the user to confirm they saved the key before continuing.
+    // This is a one-way door — the key is never stored and cannot be recovered.
+    use std::io::{BufRead, Write};
+    let stdin = std::io::stdin();
+    let mut stderr = std::io::stderr();
+    loop {
+        let _ = write!(stderr, "Type exactly \"I SAVED MY KEY\" to continue: ");
+        let _ = stderr.flush();
+        let mut line = String::new();
+        if stdin.lock().read_line(&mut line).is_err() {
+            break; // broken pipe / EOF — let the caller handle it
+        }
+        if line.trim() == "I SAVED MY KEY" {
+            break;
+        }
+        eprintln!("  ↳ Please type exactly: I SAVED MY KEY");
+    }
     eprintln!();
 
     Ok(true)
