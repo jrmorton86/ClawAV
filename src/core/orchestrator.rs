@@ -347,6 +347,7 @@ pub async fn run_watchdog(state: AppState, receivers: AlertReceivers) -> Result<
             playbooks.len(), resp_config.timeout_secs);
 
         let resp_pending = state.pending_actions.clone();
+        let resp_orchestrator = orchestrator.clone();
         tokio::spawn(async move {
             response::run_response_engine(
                 resp_rx,
@@ -354,6 +355,7 @@ pub async fn run_watchdog(state: AppState, receivers: AlertReceivers) -> Result<
                 resp_pending,
                 resp_config,
                 playbooks,
+                Some(resp_orchestrator),
             ).await;
         });
         Some(resp_tx)

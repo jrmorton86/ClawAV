@@ -286,6 +286,7 @@ pub async fn run_response_engine(
     pending_store: SharedPendingActions,
     config: ResponseConfig,
     playbooks: Vec<(String, Playbook)>,
+    orchestrator: Option<Arc<crate::approval::ApprovalOrchestrator>>,
 ) {
     // Map from pending action ID → gate reply channel (if gated)
     let mut gate_channels: HashMap<String, oneshot::Sender<GateDecision>> = HashMap::new();
@@ -379,6 +380,24 @@ pub async fn run_response_engine(
                         pending.push(pending_action);
                     }
 
+                    // Also submit to unified approval orchestrator if available
+                    if let Some(ref orch) = orchestrator {
+                        let approval_req = crate::approval::ApprovalRequest::new(
+                            crate::approval::ApprovalSource::ResponseEngine {
+                                threat_id: id.clone(),
+                                playbook: Some(name.clone()),
+                            },
+                            format!("{}: {}", alert.source, alert.message),
+                            "response-engine".to_string(),
+                            alert.severity.clone(),
+                            alert.message.clone(),
+                            timeout,
+                        );
+                        if let Err(e) = orch.submit(approval_req).await {
+                            eprintln!("Failed to submit to approval orchestrator: {}", e);
+                        }
+                    }
+
                     // Send Slack notification
                     let actions_str: Vec<String> = actions.iter().map(|a| a.to_string()).collect();
                     let notif = Alert::new(
@@ -417,6 +436,24 @@ pub async fn run_response_engine(
                     pending.push(pending_action);
                 }
                 gate_channels.insert(id.clone(), reply_tx);
+
+                // Also submit to unified approval orchestrator if available
+                if let Some(ref orch) = orchestrator {
+                    let approval_req = crate::approval::ApprovalRequest::new(
+                        crate::approval::ApprovalSource::ResponseEngine {
+                            threat_id: id.clone(),
+                            playbook: None,
+                        },
+                        format!("{}: {}", alert.source, alert.message),
+                        "response-engine".to_string(),
+                        alert.severity.clone(),
+                        alert.message.clone(),
+                        timeout,
+                    );
+                    if let Err(e) = orch.submit(approval_req).await {
+                        eprintln!("Failed to submit to approval orchestrator: {}", e);
+                    }
+                }
 
                 // Slack notification
                 let notif = Alert::new(
