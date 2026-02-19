@@ -473,6 +473,11 @@ mod tests {
                 action: "redact".to_string(),
             },
             CompiledDlpPattern {
+                name: "credit-card-amex".to_string(),
+                regex: Regex::new(r"\b3[47]\d{2}[- ]?\d{6}[- ]?\d{5}\b").unwrap(),
+                action: "redact".to_string(),
+            },
+            CompiledDlpPattern {
                 name: "aws-key".to_string(),
                 regex: Regex::new(r"AKIA[0-9A-Z]{16}").unwrap(),
                 action: "block".to_string(),
@@ -587,16 +592,16 @@ mod tests {
     }
 
     #[test]
-    fn test_dlp_amex_15_digits_bypass() {
+    fn test_dlp_amex_15_digits_detected() {
         let patterns = test_dlp_patterns();
-        // Amex 15-digit: 4x4x4x3 won't match 4x4x4x4 regex
+        // Amex 15-digit cards (3[47]xx) now detected by credit-card-amex pattern
         match scan_dlp("Amex: 3782 8224 6310 005", &patterns) {
-            DlpResult::Pass { alerts, .. } => {
-                // BUG: Amex cards bypass DLP — regex only matches 16-digit
-                let card_alerts: Vec<_> = alerts.iter().filter(|a| a.0 == "credit-card").collect();
-                assert!(card_alerts.is_empty(), "Amex bypass confirmed");
+            DlpResult::Pass { body, alerts } => {
+                assert!(body.contains("[REDACTED]"), "Amex card should be redacted");
+                let amex_alerts: Vec<_> = alerts.iter().filter(|a| a.0 == "credit-card-amex").collect();
+                assert!(!amex_alerts.is_empty(), "Amex card must trigger credit-card-amex alert");
             }
-            _ => {}
+            DlpResult::Blocked { .. } => panic!("Amex should be redacted, not blocked"),
         }
     }
 
