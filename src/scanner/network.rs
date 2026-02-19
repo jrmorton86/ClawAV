@@ -10,6 +10,7 @@ use std::process::Command;
 
 use super::{ScanResult, ScanStatus};
 use super::helpers::{run_cmd, run_cmd_with_sudo, detect_agent_home};
+use super::remediate;
 
 /// Check for promiscuous-mode interfaces, unusual tunnel/tap devices, IP forwarding, and VPN routes.
 pub fn scan_network_interfaces() -> ScanResult {
@@ -525,13 +526,35 @@ pub fn scan_openclaw_hardcoded_secrets() -> ScanResult {
     }
 
     if found.is_empty() {
-        ScanResult::new("openclaw:hardcoded_secrets", ScanStatus::Pass,
-            "No hardcoded API keys detected in OpenClaw config")
-    } else {
-        ScanResult::new("openclaw:hardcoded_secrets", ScanStatus::Fail,
-            &format!("Hardcoded API keys in config (use env vars instead): {}",
-                found.join(", ")))
+        return ScanResult::new("openclaw:hardcoded_secrets", ScanStatus::Pass,
+            "No hardcoded API keys detected in OpenClaw config");
     }
+
+    // Attempt auto-remediation: replace real keys with proxy virtual keys
+    let mut remediated = Vec::new();
+    for path in &config_paths {
+        let results = remediate::remediate_file(
+            path,
+            remediate::MANIFEST_PATH,
+            remediate::OVERLAY_PATH,
+        );
+        for r in results {
+            if r.success {
+                remediated.push(format!("{}→{} ({})", r.prefix, r.virtual_key, r.provider));
+            }
+        }
+    }
+
+    if !remediated.is_empty() {
+        return ScanResult::new("openclaw:remediated_secrets", ScanStatus::Fail,
+            &format!("Auto-remediated {} hardcoded key(s): {}. Real keys secured in proxy config. Run `clawtower restore-keys` to reverse.",
+                remediated.len(), remediated.join(", ")));
+    }
+
+    // Remediation failed or nothing to remediate — return original detection alert
+    ScanResult::new("openclaw:hardcoded_secrets", ScanStatus::Fail,
+        &format!("Hardcoded API keys in config (use env vars instead): {}",
+            found.join(", ")))
 }
 
 /// Check whether the installed OpenClaw version is current.
