@@ -10,6 +10,7 @@
 //! The [`Notification`] struct represents a generic one-way notification
 //! (as opposed to approval requests, which are interactive).
 
+pub mod discord;
 pub mod tui;
 
 use std::sync::Arc;
