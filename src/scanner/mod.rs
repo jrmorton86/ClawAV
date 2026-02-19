@@ -27,6 +27,7 @@ pub mod hardening;
 pub mod network;
 pub mod process;
 pub mod user_accounts;
+pub mod remediate;
 
 use chrono::{DateTime, Local};
 use serde::Serialize;
