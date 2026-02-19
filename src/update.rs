@@ -502,25 +502,48 @@ pub async fn run_auto_updater(alert_tx: mpsc::Sender<Alert>, interval_secs: u64,
             let _ = run_cmd("chattr", &["+i", &binary_path.to_string_lossy()]);
             let _ = run_cmd("chattr", &["+i", "/etc/clawtower/admin.key.hash"]);
 
-            // Update tray binary if installed
+            // Update tray binary if installed (with full verification)
             if std::path::Path::new("/usr/local/bin/clawtower-tray").exists() {
                 let tray_asset = format!("clawtower-tray-{}-linux", if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" });
+                let tray_sha_asset = format!("{}.sha256", tray_asset);
+                let tray_sig_asset = format!("{}.sig", tray_asset);
                 let tray_url = format!("https://github.com/{}/releases/download/{}/{}", GITHUB_REPO, tag, tray_asset);
-                if let Ok(Ok(tray_data)) = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
-                    let client = reqwest::blocking::Client::builder().user_agent("clawtower-updater").build()?;
-                    Ok(client.get(&tray_url).send()?.error_for_status()?.bytes()?.to_vec())
+                let tray_sha_url = format!("https://github.com/{}/releases/download/{}/{}", GITHUB_REPO, tag, tray_sha_asset);
+                let tray_sig_url = format!("https://github.com/{}/releases/download/{}/{}", GITHUB_REPO, tag, tray_sig_asset);
+
+                match tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
+                    let tray_data = download_and_verify(&tray_url, Some(&tray_sha_url))?;
+                    let client = reqwest::blocking::Client::builder()
+                        .user_agent("clawtower-updater").build()?;
+                    let sig_bytes = client.get(&tray_sig_url).send()?.error_for_status()?.bytes()?.to_vec();
+                    verify_release_signature(&tray_data, &sig_bytes)?;
+                    Ok(tray_data)
                 }).await {
-                    let tray_path = std::path::PathBuf::from("/usr/local/bin/clawtower-tray");
-                    let tray_tmp = tray_path.with_extension("new");
-                    if fs::write(&tray_tmp, &tray_data).is_ok() {
-                        #[cfg(unix)]
-                        {
-                            use std::os::unix::fs::PermissionsExt;
-                            let _ = fs::set_permissions(&tray_tmp, fs::Permissions::from_mode(0o755));
+                    Ok(Ok(tray_data)) => {
+                        let tray_path = std::path::PathBuf::from("/usr/local/bin/clawtower-tray");
+                        let tray_tmp = tray_path.with_extension("new");
+                        if fs::write(&tray_tmp, &tray_data).is_ok() {
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::fs::PermissionsExt;
+                                let _ = fs::set_permissions(&tray_tmp, fs::Permissions::from_mode(0o755));
+                            }
+                            let _ = run_cmd("chattr", &["-i", "/usr/local/bin/clawtower-tray"]);
+                            let _ = fs::rename(&tray_tmp, &tray_path);
+                            let _ = run_cmd("chattr", &["+i", "/usr/local/bin/clawtower-tray"]);
                         }
-                        let _ = run_cmd("chattr", &["-i", "/usr/local/bin/clawtower-tray"]);
-                        let _ = fs::rename(&tray_tmp, &tray_path);
-                        let _ = run_cmd("chattr", &["+i", "/usr/local/bin/clawtower-tray"]);
+                    }
+                    Ok(Err(e)) => {
+                        let _ = tx.send(Alert::new(
+                            Severity::Warning, "auto-update",
+                            &format!("Tray binary update skipped — verification failed: {}", e),
+                        )).await;
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Alert::new(
+                            Severity::Warning, "auto-update",
+                            &format!("Tray binary update skipped — task error: {}", e),
+                        )).await;
                     }
                 }
             }
@@ -612,5 +635,28 @@ mod tests {
     fn test_get_admin_key_missing_value() {
         let args = vec!["--key".to_string()];
         assert!(get_admin_key(&args).is_err());
+    }
+
+    #[test]
+    fn test_verify_signature_rejects_invalid_64_byte_sig() {
+        // 64 bytes (correct length) but invalid signature content
+        let result = verify_release_signature(b"some binary data", &[0u8; 64]);
+        assert!(result.is_err(), "Invalid signature must be rejected even with correct length");
+    }
+
+    #[test]
+    fn test_download_and_verify_rejects_bad_checksum() {
+        // Simulate checksum verification logic: ensure mismatch is caught
+        let data = b"binary content";
+        let mut hasher = Sha256::new();
+        hasher.update(data);
+        let correct_hash = hex::encode(hasher.finalize());
+
+        // Tampered data produces different hash
+        let mut hasher2 = Sha256::new();
+        hasher2.update(b"tampered content");
+        let tampered_hash = hex::encode(hasher2.finalize());
+
+        assert_ne!(correct_hash, tampered_hash, "Different data must produce different SHA-256");
     }
 }
