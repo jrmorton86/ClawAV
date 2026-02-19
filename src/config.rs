@@ -60,6 +60,8 @@ pub struct Config {
     pub export: ExportConfig,
     #[serde(default)]
     pub cloud: CloudConfig,
+    #[serde(default)]
+    pub prompt_firewall: PromptFirewallConfig,
 }
 
 /// Behavior detection engine configuration.
@@ -356,6 +358,41 @@ pub struct DlpPattern {
     pub action: String,
 }
 
+/// Prompt firewall configuration — intercepts malicious prompts before they reach LLM providers.
+///
+/// Tier system:
+/// - Tier 1 (Permissive): Log all matches, block nothing
+/// - Tier 2 (Standard): Block prompt_injection + exfil_via_prompt, log the rest
+/// - Tier 3 (Strict): Block all categories
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct PromptFirewallConfig {
+    pub enabled: bool,
+    /// Security tier: 1 = permissive, 2 = standard, 3 = strict
+    pub tier: u8,
+    /// Path to the prompt firewall patterns JSON file
+    #[serde(default = "default_prompt_firewall_patterns_path")]
+    pub patterns_path: String,
+    /// Per-category action overrides. Keys: prompt_injection, exfil_via_prompt,
+    /// jailbreak, tool_abuse, system_prompt_extract. Values: "block", "warn", "log".
+    #[serde(default)]
+    pub overrides: std::collections::HashMap<String, String>,
+}
+
+fn default_prompt_firewall_patterns_path() -> String {
+    "/etc/clawtower/prompt-firewall-patterns.json".to_string()
+}
+
+impl Default for PromptFirewallConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            tier: 2,
+            patterns_path: default_prompt_firewall_patterns_path(),
+            overrides: std::collections::HashMap::new(),
+        }
+    }
+}
+
 /// Network policy (allowlist/blocklist) configuration.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct NetPolicyConfig {
@@ -639,7 +676,7 @@ impl Default for FileExportConfig {
 pub struct SentinelConfig {
     #[serde(default = "default_sentinel_enabled")]
     pub enabled: bool,
-    #[serde(default)]
+    #[serde(default = "default_watch_paths")]
     pub watch_paths: Vec<WatchPathConfig>,
     #[serde(default = "default_quarantine_dir")]
     pub quarantine_dir: String,
@@ -723,189 +760,197 @@ fn default_exclude_content_scan() -> Vec<String> {
     ]
 }
 
+/// Default sentinel watch paths. Extracted as a named function so that
+/// `#[serde(default = "default_watch_paths")]` returns the full list when
+/// a config overlay (e.g. `[sentinel] enabled = true`) triggers partial
+/// deserialization — otherwise `#[serde(default)]` would produce an empty vec.
+fn default_watch_paths() -> Vec<WatchPathConfig> {
+    vec![
+        WatchPathConfig {
+            path: "/home/openclaw/.openclaw/workspace/SOUL.md".to_string(),
+            patterns: vec!["*".to_string()],
+            policy: WatchPolicy::Protected,
+        },
+        WatchPathConfig {
+            path: "/home/openclaw/.openclaw/workspace/AGENTS.md".to_string(),
+            patterns: vec!["*".to_string()],
+            policy: WatchPolicy::Protected,
+        },
+        WatchPathConfig {
+            path: "/home/openclaw/.openclaw/workspace/MEMORY.md".to_string(),
+            patterns: vec!["*".to_string()],
+            policy: WatchPolicy::Protected,
+        },
+        WatchPathConfig {
+            path: "/home/openclaw/.openclaw/workspace/IDENTITY.md".to_string(),
+            patterns: vec!["*".to_string()],
+            policy: WatchPolicy::Protected,
+        },
+        WatchPathConfig {
+            path: "/home/openclaw/.openclaw/workspace/USER.md".to_string(),
+            patterns: vec!["*".to_string()],
+            policy: WatchPolicy::Protected,
+        },
+        WatchPathConfig {
+            path: "/home/openclaw/.openclaw/workspace/HEARTBEAT.md".to_string(),
+            patterns: vec!["*".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        WatchPathConfig {
+            path: "/home/openclaw/.openclaw/workspace/TOOLS.md".to_string(),
+            patterns: vec!["*".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        WatchPathConfig {
+            path: "/home/openclaw/.openclaw/workspace/superpowers/skills".to_string(),
+            patterns: vec!["SKILL.md".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        // OpenClaw credential and config monitoring — all JSON in config root
+        WatchPathConfig {
+            path: "/home/openclaw/.openclaw".to_string(),
+            patterns: vec!["*.json".to_string()],
+            policy: WatchPolicy::Protected,
+        },
+        WatchPathConfig {
+            path: "/home/openclaw/.openclaw/credentials".to_string(),
+            patterns: vec!["*.json".to_string()],
+            policy: WatchPolicy::Protected,
+        },
+        WatchPathConfig {
+            path: "/home/openclaw/.openclaw/agents/main/agent/auth-profiles.json".to_string(),
+            patterns: vec!["*".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        // Session metadata monitoring
+        WatchPathConfig {
+            path: "/home/openclaw/.openclaw/agents/main/sessions/sessions.json".to_string(),
+            patterns: vec!["*".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        // WhatsApp credential theft detection
+        WatchPathConfig {
+            path: "/home/openclaw/.openclaw/credentials/whatsapp".to_string(),
+            patterns: vec!["creds.json".to_string()],
+            policy: WatchPolicy::Protected,
+        },
+        // Pairing allowlist changes
+        WatchPathConfig {
+            path: "/home/openclaw/.openclaw/credentials".to_string(),
+            patterns: vec!["*-allowFrom.json".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        // Persistence-critical shell/profile files
+        WatchPathConfig {
+            path: "/home/openclaw/.bashrc".to_string(),
+            patterns: vec!["*".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        WatchPathConfig {
+            path: "/home/openclaw/.profile".to_string(),
+            patterns: vec!["*".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        WatchPathConfig {
+            path: "/home/openclaw/.bash_login".to_string(),
+            patterns: vec!["*".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        WatchPathConfig {
+            path: "/home/openclaw/.bash_logout".to_string(),
+            patterns: vec!["*".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        WatchPathConfig {
+            path: "/home/openclaw/.npmrc".to_string(),
+            patterns: vec!["*".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        WatchPathConfig {
+            path: "/home/openclaw/.ssh/rc".to_string(),
+            patterns: vec!["*".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        WatchPathConfig {
+            path: "/home/openclaw/.ssh/environment".to_string(),
+            patterns: vec!["*".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        // Persistence directory watches (systemd user units, autostart, git hooks)
+        WatchPathConfig {
+            path: "/home/openclaw/.config/systemd/user".to_string(),
+            patterns: vec!["*.service".to_string(), "*.timer".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        WatchPathConfig {
+            path: "/home/openclaw/.config/autostart".to_string(),
+            patterns: vec!["*.desktop".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        WatchPathConfig {
+            path: "/home/openclaw/.openclaw/workspace/.git/hooks".to_string(),
+            patterns: vec!["*".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        // System-level persistence paths (cron, at)
+        WatchPathConfig {
+            path: "/var/spool/cron/crontabs".to_string(),
+            patterns: vec!["*".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        WatchPathConfig {
+            path: "/var/spool/at".to_string(),
+            patterns: vec!["*".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        // Python sitecustomize.py persistence
+        WatchPathConfig {
+            path: "/usr/lib/python3/dist-packages".to_string(),
+            patterns: vec!["sitecustomize.py".to_string(), "usercustomize.py".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        WatchPathConfig {
+            path: "/usr/local/lib/python3.11/dist-packages".to_string(),
+            patterns: vec!["sitecustomize.py".to_string(), "usercustomize.py".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        // npm package-lock persistence indicator
+        WatchPathConfig {
+            path: "/home/openclaw/.node_modules".to_string(),
+            patterns: vec![".package-lock.json".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        // MCP config integrity (Tinman MCP-* coverage)
+        WatchPathConfig {
+            path: "/home/openclaw/.mcp".to_string(),
+            patterns: vec!["*.json".to_string(), "*.yaml".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        WatchPathConfig {
+            path: "/home/openclaw/.openclaw/mcp-servers".to_string(),
+            patterns: vec!["*".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        // Download directory monitoring for indirect injection (Tinman II-*)
+        WatchPathConfig {
+            path: "/home/openclaw/Downloads".to_string(),
+            patterns: vec!["*.md".to_string(), "*.txt".to_string(), "*.json".to_string(), "*.html".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+        // Memory file poisoning detection (Tinman MP-*)
+        WatchPathConfig {
+            path: "/home/openclaw/.openclaw/workspace/memory".to_string(),
+            patterns: vec!["*.md".to_string()],
+            policy: WatchPolicy::Watched,
+        },
+    ]
+}
+
 impl Default for SentinelConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            watch_paths: vec![
-                WatchPathConfig {
-                    path: "/home/openclaw/.openclaw/workspace/SOUL.md".to_string(),
-                    patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Protected,
-                },
-                WatchPathConfig {
-                    path: "/home/openclaw/.openclaw/workspace/AGENTS.md".to_string(),
-                    patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Protected,
-                },
-                WatchPathConfig {
-                    path: "/home/openclaw/.openclaw/workspace/MEMORY.md".to_string(),
-                    patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Protected,
-                },
-                WatchPathConfig {
-                    path: "/home/openclaw/.openclaw/workspace/IDENTITY.md".to_string(),
-                    patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Protected,
-                },
-                WatchPathConfig {
-                    path: "/home/openclaw/.openclaw/workspace/USER.md".to_string(),
-                    patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Protected,
-                },
-                WatchPathConfig {
-                    path: "/home/openclaw/.openclaw/workspace/HEARTBEAT.md".to_string(),
-                    patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                WatchPathConfig {
-                    path: "/home/openclaw/.openclaw/workspace/TOOLS.md".to_string(),
-                    patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                WatchPathConfig {
-                    path: "/home/openclaw/.openclaw/workspace/superpowers/skills".to_string(),
-                    patterns: vec!["SKILL.md".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                // OpenClaw credential and config monitoring — all JSON in config root
-                WatchPathConfig {
-                    path: "/home/openclaw/.openclaw".to_string(),
-                    patterns: vec!["*.json".to_string()],
-                    policy: WatchPolicy::Protected,
-                },
-                WatchPathConfig {
-                    path: "/home/openclaw/.openclaw/credentials".to_string(),
-                    patterns: vec!["*.json".to_string()],
-                    policy: WatchPolicy::Protected,
-                },
-                WatchPathConfig {
-                    path: "/home/openclaw/.openclaw/agents/main/agent/auth-profiles.json".to_string(),
-                    patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                // Session metadata monitoring
-                WatchPathConfig {
-                    path: "/home/openclaw/.openclaw/agents/main/sessions/sessions.json".to_string(),
-                    patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                // WhatsApp credential theft detection
-                WatchPathConfig {
-                    path: "/home/openclaw/.openclaw/credentials/whatsapp".to_string(),
-                    patterns: vec!["creds.json".to_string()],
-                    policy: WatchPolicy::Protected,
-                },
-                // Pairing allowlist changes
-                WatchPathConfig {
-                    path: "/home/openclaw/.openclaw/credentials".to_string(),
-                    patterns: vec!["*-allowFrom.json".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                // Persistence-critical shell/profile files
-                WatchPathConfig {
-                    path: "/home/openclaw/.bashrc".to_string(),
-                    patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                WatchPathConfig {
-                    path: "/home/openclaw/.profile".to_string(),
-                    patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                WatchPathConfig {
-                    path: "/home/openclaw/.bash_login".to_string(),
-                    patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                WatchPathConfig {
-                    path: "/home/openclaw/.bash_logout".to_string(),
-                    patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                WatchPathConfig {
-                    path: "/home/openclaw/.npmrc".to_string(),
-                    patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                WatchPathConfig {
-                    path: "/home/openclaw/.ssh/rc".to_string(),
-                    patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                WatchPathConfig {
-                    path: "/home/openclaw/.ssh/environment".to_string(),
-                    patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                // Persistence directory watches (systemd user units, autostart, git hooks)
-                WatchPathConfig {
-                    path: "/home/openclaw/.config/systemd/user".to_string(),
-                    patterns: vec!["*.service".to_string(), "*.timer".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                WatchPathConfig {
-                    path: "/home/openclaw/.config/autostart".to_string(),
-                    patterns: vec!["*.desktop".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                WatchPathConfig {
-                    path: "/home/openclaw/.openclaw/workspace/.git/hooks".to_string(),
-                    patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                // System-level persistence paths (cron, at)
-                WatchPathConfig {
-                    path: "/var/spool/cron/crontabs".to_string(),
-                    patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                WatchPathConfig {
-                    path: "/var/spool/at".to_string(),
-                    patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                // Python sitecustomize.py persistence
-                WatchPathConfig {
-                    path: "/usr/lib/python3/dist-packages".to_string(),
-                    patterns: vec!["sitecustomize.py".to_string(), "usercustomize.py".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                WatchPathConfig {
-                    path: "/usr/local/lib/python3.11/dist-packages".to_string(),
-                    patterns: vec!["sitecustomize.py".to_string(), "usercustomize.py".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                // npm package-lock persistence indicator
-                WatchPathConfig {
-                    path: "/home/openclaw/.node_modules".to_string(),
-                    patterns: vec![".package-lock.json".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                // MCP config integrity (Tinman MCP-* coverage)
-                WatchPathConfig {
-                    path: "/home/openclaw/.mcp".to_string(),
-                    patterns: vec!["*.json".to_string(), "*.yaml".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                WatchPathConfig {
-                    path: "/home/openclaw/.openclaw/mcp-servers".to_string(),
-                    patterns: vec!["*".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                // Download directory monitoring for indirect injection (Tinman II-*)
-                WatchPathConfig {
-                    path: "/home/openclaw/Downloads".to_string(),
-                    patterns: vec!["*.md".to_string(), "*.txt".to_string(), "*.json".to_string(), "*.html".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-                // Memory file poisoning detection (Tinman MP-*)
-                WatchPathConfig {
-                    path: "/home/openclaw/.openclaw/workspace/memory".to_string(),
-                    patterns: vec!["*.md".to_string()],
-                    policy: WatchPolicy::Watched,
-                },
-            ],
+            watch_paths: default_watch_paths(),
             quarantine_dir: default_quarantine_dir(),
             shadow_dir: default_shadow_dir(),
             debounce_ms: default_debounce_ms(),
@@ -1313,6 +1358,44 @@ mod tests {
         assert!(config.auto_update.enabled);
         assert_eq!(config.auto_update.interval, 300);
         assert!(config.openclaw.enabled);
+    }
+
+    #[test]
+    fn test_regression_sentinel_watch_paths_survive_partial_section() {
+        // REGRESSION: When a profile overlay adds [sentinel] enabled = true,
+        // the TOML merge creates a partial sentinel section. Without a named
+        // serde default for watch_paths, #[serde(default)] produced vec![]
+        // instead of the full watch path list — silently disabling all watches.
+        let toml_str = r##"
+            [general]
+            watched_user = "1000"
+            min_alert_level = "info"
+            log_file = "/var/log/test.log"
+            [slack]
+            webhook_url = ""
+            channel = "#test"
+            min_slack_level = "critical"
+            [auditd]
+            log_path = "/var/log/audit/audit.log"
+            enabled = true
+            [network]
+            log_path = "/var/log/syslog"
+            log_prefix = "TEST"
+            enabled = true
+            [scans]
+            interval = 60
+            [sentinel]
+            enabled = true
+        "##;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.sentinel.enabled);
+        assert!(!config.sentinel.watch_paths.is_empty(),
+            "REGRESSION: sentinel.watch_paths must not be empty when [sentinel] section \
+             only specifies enabled=true — serde default must return full watch list");
+        assert!(config.sentinel.watch_paths.iter().any(|w| w.path.contains("SOUL.md")),
+            "Default watch paths must include SOUL.md");
+        assert!(config.sentinel.watch_paths.iter().any(|w| w.path == "/home/openclaw/.openclaw"),
+            "Default watch paths must include .openclaw directory (for *.json glob)");
     }
 
     #[test]
@@ -1793,6 +1876,30 @@ interval = 3600
         ).unwrap();
         assert_eq!(config.scans.interval, 3600);
         assert_eq!(config.slack.min_slack_level, "critical");
+    }
+
+    #[test]
+    fn test_prompt_firewall_config_defaults() {
+        let config = PromptFirewallConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.tier, 2);
+        assert_eq!(config.patterns_path, "/etc/clawtower/prompt-firewall-patterns.json");
+        assert!(config.overrides.is_empty());
+    }
+
+    #[test]
+    fn test_prompt_firewall_config_deserialize() {
+        let toml_str = r#"
+            enabled = true
+            tier = 3
+            patterns_path = "/custom/patterns.json"
+            [overrides]
+            jailbreak = "log"
+        "#;
+        let config: PromptFirewallConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.enabled);
+        assert_eq!(config.tier, 3);
+        assert_eq!(config.overrides.get("jailbreak").unwrap(), "log");
     }
 
     #[test]
