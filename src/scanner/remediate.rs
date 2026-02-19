@@ -79,6 +79,7 @@ pub struct RemediationEntry {
 }
 
 /// Result of remediating a single key within a file.
+#[allow(dead_code)]
 pub struct RemediationResult {
     /// Whether the remediation succeeded.
     pub success: bool,
@@ -1806,5 +1807,73 @@ name: not-a-key
             false,
         );
         assert_eq!(count, 0, "Should return 0 for non-matching filter ID");
+    }
+
+    // ─── Full lifecycle integration test ──────────────────────────────
+
+    #[test]
+    fn test_full_lifecycle_remediate_and_restore() {
+        // Skip if /etc/machine-id is not available
+        if std::fs::read_to_string("/etc/machine-id").is_err() {
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("openclaw.json");
+        let manifest_path = dir.path().join("manifest.json");
+        let overlay_path = dir.path().join("overlay.toml");
+
+        // Multi-key config
+        let original = r#"{
+        "channels": { "slack": { "botToken": "xoxb-1234567890-abcdefghijklmnop" } },
+        "providers": { "anthropic": { "apiKey": "sk-ant-abcdefghijklmnop1234567890" } },
+        "name": "test-agent"
+    }"#;
+        std::fs::write(&config_path, original).unwrap();
+
+        // Remediate
+        let results = remediate_file(
+            config_path.to_str().unwrap(),
+            manifest_path.to_str().unwrap(),
+            overlay_path.to_str().unwrap(),
+        );
+        assert_eq!(results.len(), 2, "Should remediate 2 keys");
+        assert!(results.iter().all(|r| r.success), "All remediations should succeed");
+
+        // Verify both keys replaced
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        assert!(!content.contains("xoxb-"), "xoxb key should be replaced");
+        assert!(!content.contains("sk-ant-"), "sk-ant key should be replaced");
+        assert!(content.contains("vk-remediated-slack-"), "Should have slack virtual key");
+        assert!(content.contains("vk-remediated-anthropic-"), "Should have anthropic virtual key");
+
+        // Verify manifest has 2 entries
+        let manifest = load_manifest(manifest_path.to_str().unwrap());
+        assert_eq!(manifest.remediations.len(), 2, "Manifest should have 2 entries");
+
+        // Verify overlay has 2 mappings
+        let overlay_content = std::fs::read_to_string(&overlay_path).unwrap();
+        assert!(overlay_content.contains("xoxb-1234567890-abcdefghijklmnop"), "Overlay should contain real slack key");
+        assert!(overlay_content.contains("sk-ant-abcdefghijklmnop1234567890"), "Overlay should contain real anthropic key");
+
+        // Restore all
+        let restored = restore_keys(
+            manifest_path.to_str().unwrap(),
+            overlay_path.to_str().unwrap(),
+            None,
+            false,
+        );
+        assert_eq!(restored, 2, "Should restore 2 keys");
+
+        // Verify original keys restored
+        let final_content = std::fs::read_to_string(&config_path).unwrap();
+        assert!(final_content.contains("xoxb-1234567890-abcdefghijklmnop"), "Slack key should be restored");
+        assert!(final_content.contains("sk-ant-abcdefghijklmnop1234567890"), "Anthropic key should be restored");
+        assert!(!final_content.contains("vk-remediated-"), "No virtual keys should remain");
+
+        // Manifest empty, overlay gone
+        let manifest = load_manifest(manifest_path.to_str().unwrap());
+        assert!(manifest.remediations.is_empty(), "Manifest should be empty");
+        assert!(!overlay_path.exists(), "Overlay should be deleted");
     }
 }
