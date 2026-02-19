@@ -35,7 +35,7 @@ mod alerts;
 mod aggregator;
 mod apparmor;
 mod capabilities;
-mod capability;
+mod agent_envelope;
 mod correlator;
 mod detect;
 mod export;
@@ -985,6 +985,10 @@ async fn async_main() -> Result<()> {
 
     // Spawn API server if enabled (after pending_store and response_tx are ready)
     if config.api.enabled {
+        if let Err(e) = config.api.validate() {
+            eprintln!("FATAL: {}", e);
+            std::process::exit(1);
+        }
         let audit_chain_path = if unsafe { libc::getuid() } == 0 {
             PathBuf::from("/var/log/clawtower/audit.chain")
         } else {
@@ -1128,6 +1132,17 @@ async fn async_main() -> Result<()> {
         let update_mode = config.auto_update.mode.clone();
         tokio::spawn(async move {
             crate::update::run_auto_updater(update_tx, update_interval, update_mode).await;
+        });
+    }
+
+    // Spawn memory sentinel if enabled
+    if config.memory_sentinel.enabled {
+        let mem_config = config.memory_sentinel.clone();
+        let mem_tx = raw_tx.clone();
+        eprintln!("Memory sentinel enabled (target_pid: {:?}, interval: {}ms)",
+            mem_config.target_pid, mem_config.scan_interval_ms);
+        tokio::spawn(async move {
+            memory_sentinel::run_memory_sentinel(mem_config, mem_tx).await;
         });
     }
 

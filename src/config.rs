@@ -62,6 +62,8 @@ pub struct Config {
     pub cloud: CloudConfig,
     #[serde(default)]
     pub prompt_firewall: PromptFirewallConfig,
+    #[serde(default)]
+    pub memory_sentinel: MemorySentinelConfig,
 }
 
 /// Behavior detection engine configuration.
@@ -74,6 +76,35 @@ pub struct BehaviorConfig {
     /// This does not change production alert fanout.
     #[serde(default)]
     pub detector_shadow_mode: bool,
+}
+
+/// Memory sentinel configuration — process memory integrity monitoring.
+///
+/// When enabled, periodically scans a target process's memory for integrity
+/// violations (.text modification, GOT overwrites). Disabled by default
+/// because it requires `CAP_SYS_PTRACE` or equivalent.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct MemorySentinelConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// PID of the process to monitor. If not set, memory sentinel won't start.
+    #[serde(default)]
+    pub target_pid: Option<u32>,
+    /// Scan interval in milliseconds (default: 30000 = 30s at Normal threat level).
+    #[serde(default = "default_memory_scan_interval")]
+    pub scan_interval_ms: u64,
+}
+
+fn default_memory_scan_interval() -> u64 { 30_000 }
+
+impl Default for MemorySentinelConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            target_pid: None,
+            scan_interval_ms: default_memory_scan_interval(),
+        }
+    }
 }
 
 /// Auto-update configuration: checks GitHub releases periodically.
@@ -297,6 +328,22 @@ impl Default for ApiConfig {
             port: 18791,
             auth_token: String::new(),
         }
+    }
+}
+
+impl ApiConfig {
+    /// Validate API configuration. Non-loopback binds require an auth token.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.enabled && self.auth_token.is_empty() {
+            let is_loopback = self.bind == "127.0.0.1" || self.bind == "::1" || self.bind == "localhost";
+            if !is_loopback {
+                return Err(format!(
+                    "API bound to {} without auth_token — set [api] auth_token or bind to 127.0.0.1",
+                    self.bind
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1914,5 +1961,60 @@ interval = 3600
         assert!(mapping.ttl_secs.is_none(), "ttl_secs should default to None");
         assert!(mapping.allowed_paths.is_empty(), "allowed_paths should default to empty");
         assert_eq!(mapping.revoke_at_risk, 0.0, "revoke_at_risk should default to 0.0");
+    }
+
+    #[test]
+    fn test_api_non_loopback_requires_auth_token() {
+        let config = ApiConfig {
+            enabled: true,
+            bind: "0.0.0.0".to_string(),
+            port: 18791,
+            auth_token: String::new(),
+        };
+        assert!(config.validate().is_err(), "Non-loopback bind must require auth_token");
+    }
+
+    #[test]
+    fn test_api_loopback_allows_empty_token() {
+        let config = ApiConfig {
+            enabled: true,
+            bind: "127.0.0.1".to_string(),
+            port: 18791,
+            auth_token: String::new(),
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_api_non_loopback_with_token_ok() {
+        let config = ApiConfig {
+            enabled: true,
+            bind: "0.0.0.0".to_string(),
+            port: 18791,
+            auth_token: "my-secret".to_string(),
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_api_disabled_skips_validation() {
+        let config = ApiConfig {
+            enabled: false,
+            bind: "0.0.0.0".to_string(),
+            port: 18791,
+            auth_token: String::new(),
+        };
+        assert!(config.validate().is_ok(), "Disabled API should skip validation");
+    }
+
+    #[test]
+    fn test_api_ipv6_loopback_allows_empty_token() {
+        let config = ApiConfig {
+            enabled: true,
+            bind: "::1".to_string(),
+            port: 18791,
+            auth_token: String::new(),
+        };
+        assert!(config.validate().is_ok());
     }
 }
