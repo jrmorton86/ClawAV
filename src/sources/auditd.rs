@@ -828,9 +828,10 @@ pub async fn tail_audit_log(
                 sleep(Duration::from_millis(200)).await;
             }
             Ok(_) => {
+                // During backlog catch-up, skip everything before startup.
                 if catching_up {
                     if let Some(epoch) = extract_audit_epoch(&line) {
-                        if epoch + 5 < startup_epoch {
+                        if epoch <= startup_epoch {
                             continue;
                         }
                     }
@@ -908,8 +909,11 @@ pub async fn tail_audit_log_full(
     let _ = reader.read_line(&mut discard);
     let mut line = String::new();
 
-    // Backlog filter: skip audit lines older than startup to avoid flooding
-    // the dashboard with stale events from the 64KB backlog window.
+    // Backlog filter: skip ALL audit lines from before startup to avoid
+    // flooding the dashboard with stale events from the 64KB backlog window.
+    // Deploy events (chattr -i → cp → chattr +i) generate 15-20 auditd
+    // records that would otherwise appear as CONFIG TAMPER alerts on every
+    // restart. Once we hit first EOF we switch to live mode.
     let startup_epoch = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -1018,11 +1022,11 @@ pub async fn tail_audit_log_full(
                 sleep(Duration::from_millis(200)).await;
             }
             Ok(_) => {
-                // During backlog catch-up, skip lines older than startup minus
-                // a small grace window. Fail-open: unparseable timestamps pass.
+                // During backlog catch-up, skip everything before startup.
+                // Fail-open: unparseable timestamps pass through.
                 if catching_up {
                     if let Some(epoch) = extract_audit_epoch(&line) {
-                        if epoch + 5 < startup_epoch {
+                        if epoch <= startup_epoch {
                             continue;
                         }
                     }
