@@ -123,16 +123,34 @@ pub async fn run_watchdog(state: AppState, receivers: AlertReceivers) -> Result<
         });
     }
 
+    // Shared dynamic mappings for auth-profile virtualization (used by both proxy and guard)
+    let dynamic_mappings = std::sync::Arc::new(std::sync::Mutex::new(Vec::<proxy::KeyMapping>::new()));
+
     // Proxy server
     if state.config.proxy.enabled {
         let proxy_config = state.config.proxy.clone();
         let firewall_config = state.config.prompt_firewall.clone();
         let proxy_tx = state.raw_tx.clone();
+        let proxy_dyn = dynamic_mappings.clone();
+        let (_proxy_reload_tx, proxy_reload_rx) = tokio::sync::watch::channel(());
+        // _proxy_reload_tx is kept alive by the spawned scope — the reload channel
+        // will be wired up to the remediation module in a future task.
         tokio::spawn(async move {
-            let server = proxy::ProxyServer::new(proxy_config, firewall_config, proxy_tx);
+            let _reload_tx = _proxy_reload_tx; // move into task to keep sender alive
+            let server = proxy::ProxyServer::new_with_reload(
+                proxy_config, firewall_config, proxy_tx, proxy_dyn, proxy_reload_rx,
+            );
             if let Err(e) = server.start().await {
                 eprintln!("Proxy server error: {}", e);
             }
+        });
+
+        // Auth-profile virtual credential guard
+        let auth_path = std::path::PathBuf::from(&state.config.proxy.auth_profile_path);
+        let guard_mappings = dynamic_mappings.clone();
+        let guard_tx = state.raw_tx.clone();
+        tokio::spawn(async move {
+            proxy::auth_profiles::start_auth_profile_guard(auth_path, guard_mappings, guard_tx).await;
         });
     }
 
@@ -299,6 +317,7 @@ pub async fn run_watchdog(state: AppState, receivers: AlertReceivers) -> Result<
             scan_dedup_window: std::time::Duration::from_secs(state.config.incident_mode.scan_dedup_window_secs),
             rate_limit_per_source: state.config.incident_mode.rate_limit_per_source,
             rate_limit_window: std::time::Duration::from_secs(60),
+            critical_dedup_window: std::time::Duration::from_secs(5),
         }
     } else {
         AggregatorConfig::default()

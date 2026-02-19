@@ -10,6 +10,8 @@
 //! Outbound request bodies are scanned against configurable DLP regex patterns.
 //! Matches can trigger blocking (SSN, AWS keys) or redaction (credit cards).
 
+pub mod auth_profiles;
+
 use crate::core::alerts::{Alert, Severity};
 use crate::config::PromptFirewallConfig;
 use crate::detect::prompt_firewall::{PromptFirewall, FirewallResult};
@@ -20,9 +22,9 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
 
 // ── Config types (moved from config.rs) ──────────────────────────────────────
 
@@ -36,6 +38,13 @@ pub struct ProxyConfig {
     pub key_mapping: Vec<KeyMapping>,
     #[serde(default)]
     pub dlp: DlpConfig,
+    /// Path to auth-profiles.json for virtual credential guard.
+    #[serde(default = "default_auth_profile_path")]
+    pub auth_profile_path: String,
+}
+
+fn default_auth_profile_path() -> String {
+    "/home/openclaw/.openclaw/agents/main/agent/auth-profiles.json".to_string()
 }
 
 impl Default for ProxyConfig {
@@ -46,6 +55,7 @@ impl Default for ProxyConfig {
             port: 18790,
             key_mapping: Vec::new(),
             dlp: DlpConfig::default(),
+            auth_profile_path: default_auth_profile_path(),
         }
     }
 }
@@ -85,11 +95,13 @@ pub struct DlpPattern {
 }
 
 struct ProxyState {
-    key_mappings: Vec<KeyMapping>,
-    credential_states: HashMap<String, CredentialState>,
+    key_mappings: Arc<RwLock<Vec<KeyMapping>>>,
+    credential_states: Arc<RwLock<HashMap<String, CredentialState>>>,
     dlp_patterns: Vec<CompiledDlpPattern>,
     prompt_firewall: PromptFirewall,
     alert_tx: mpsc::Sender<Alert>,
+    /// Dynamic auth-profile mappings (updated by auth_profile_guard)
+    dynamic_mappings: Arc<Mutex<Vec<KeyMapping>>>,
 }
 
 pub(crate) struct CompiledDlpPattern {
@@ -103,11 +115,29 @@ pub struct ProxyServer {
     config: ProxyConfig,
     firewall_config: PromptFirewallConfig,
     alert_tx: mpsc::Sender<Alert>,
+    dynamic_mappings: Arc<Mutex<Vec<KeyMapping>>>,
+    reload_rx: Option<tokio::sync::watch::Receiver<()>>,
 }
 
 impl ProxyServer {
-    pub fn new(config: ProxyConfig, firewall_config: PromptFirewallConfig, alert_tx: mpsc::Sender<Alert>) -> Self {
-        Self { config, firewall_config, alert_tx }
+    #[allow(dead_code)]
+    pub fn new(
+        config: ProxyConfig,
+        firewall_config: PromptFirewallConfig,
+        alert_tx: mpsc::Sender<Alert>,
+        dynamic_mappings: Arc<Mutex<Vec<KeyMapping>>>,
+    ) -> Self {
+        Self { config, firewall_config, alert_tx, dynamic_mappings, reload_rx: None }
+    }
+
+    pub fn new_with_reload(
+        config: ProxyConfig,
+        firewall_config: PromptFirewallConfig,
+        alert_tx: mpsc::Sender<Alert>,
+        dynamic_mappings: Arc<Mutex<Vec<KeyMapping>>>,
+        reload_rx: tokio::sync::watch::Receiver<()>,
+    ) -> Self {
+        Self { config, firewall_config, alert_tx, dynamic_mappings, reload_rx: Some(reload_rx) }
     }
 
     pub async fn start(self) -> Result<()> {
@@ -139,13 +169,61 @@ impl ProxyServer {
             PromptFirewall::load("/dev/null", 2, &std::collections::HashMap::new()).unwrap()
         });
 
+        let key_mappings = Arc::new(RwLock::new(self.config.key_mapping.clone()));
+        let credential_states = Arc::new(RwLock::new(credential_states));
+
         let state = Arc::new(ProxyState {
-            key_mappings: self.config.key_mapping.clone(),
-            credential_states,
+            key_mappings: key_mappings.clone(),
+            credential_states: credential_states.clone(),
             dlp_patterns: compiled_patterns,
             prompt_firewall,
             alert_tx: self.alert_tx,
+            dynamic_mappings: self.dynamic_mappings,
         });
+
+        // Spawn reload watcher if a reload channel was provided
+        if let Some(mut reload_rx) = self.reload_rx {
+            let reload_key_mappings = key_mappings;
+            let reload_credential_states = credential_states;
+            let reload_alert_tx = state.alert_tx.clone();
+            tokio::spawn(async move {
+                loop {
+                    if reload_rx.changed().await.is_err() {
+                        // Sender dropped — no more reloads will come
+                        break;
+                    }
+                    eprintln!("[proxy] reload signal received, re-reading config overlays...");
+                    match reload_key_mappings_from_disk() {
+                        Ok(new_mappings) => {
+                            let mut new_cred_states = HashMap::new();
+                            for mapping in &new_mappings {
+                                new_cred_states.insert(
+                                    mapping.virtual_key.clone(),
+                                    CredentialState::new(mapping),
+                                );
+                            }
+                            let count = new_mappings.len();
+                            *reload_key_mappings.write().await = new_mappings;
+                            *reload_credential_states.write().await = new_cred_states;
+                            let _ = reload_alert_tx.send(Alert::new(
+                                Severity::Info,
+                                "proxy",
+                                &format!("Proxy key mappings reloaded ({} mappings)", count),
+                            )).await;
+                            eprintln!("[proxy] reloaded {} key mappings", count);
+                        }
+                        Err(e) => {
+                            let _ = reload_alert_tx.send(Alert::new(
+                                Severity::Warning,
+                                "proxy",
+                                &format!("Proxy reload failed: {}", e),
+                            )).await;
+                            eprintln!("[proxy] reload error: {}", e);
+                        }
+                    }
+                }
+            });
+        }
 
         let addr: SocketAddr = format!("{}:{}", self.config.bind, self.config.port).parse()?;
 
@@ -162,6 +240,20 @@ impl ProxyServer {
         Server::bind(&addr).serve(make_svc).await?;
         Ok(())
     }
+}
+
+/// Re-read the base config and config.d overlays from disk, returning the
+/// updated key_mapping list.  Called by the reload watcher task.
+fn reload_key_mappings_from_disk() -> Result<Vec<KeyMapping>> {
+    use std::path::Path;
+    let base_path = Path::new("/etc/clawtower/config.toml");
+    let config_d = Path::new("/etc/clawtower/config.d");
+    let config = if config_d.is_dir() {
+        crate::config::Config::load_with_overrides(base_path, config_d)?
+    } else {
+        crate::config::Config::load(base_path)?
+    };
+    Ok(config.proxy.key_mapping)
 }
 
 /// Look up a virtual key and return (real_key, provider, upstream)
@@ -331,36 +423,51 @@ async fn handle_request(
         }
     };
 
-    // Look up mapping
-    let (real_key, provider, upstream) = match lookup_virtual_key(&state.key_mappings, &virtual_key) {
-        Some(v) => v,
-        None => {
-            return Ok(Response::builder()
-                .status(StatusCode::UNAUTHORIZED)
-                .body(Body::from("Unknown virtual key"))
-                .unwrap());
+    // Look up mapping: static key_mappings first, then dynamic auth-profile mappings
+    let (real_key, provider, upstream) = {
+        let mappings = state.key_mappings.read().await;
+        match lookup_virtual_key(&mappings, &virtual_key) {
+            Some((r, p, u)) => (r.to_string(), p.to_string(), u.to_string()),
+            None => {
+                drop(mappings); // release read lock before acquiring std Mutex
+                // Check dynamic auth-profile mappings
+                let dynamic = state.dynamic_mappings.lock().ok()
+                    .and_then(|m| lookup_virtual_key(&m, &virtual_key)
+                        .map(|(r, p, u)| (r.to_string(), p.to_string(), u.to_string())));
+                match dynamic {
+                    Some(v) => v,
+                    None => {
+                        return Ok(Response::builder()
+                            .status(StatusCode::UNAUTHORIZED)
+                            .body(Body::from("Unknown virtual key"))
+                            .unwrap());
+                    }
+                }
+            }
         }
     };
 
-    let real_key = real_key.to_string();
-    let provider = provider.to_string();
-    let upstream = upstream.to_string();
-
     // Check credential scoping (TTL, path restriction, revocation)
-    if let Some(cred_state) = state.credential_states.get(&virtual_key) {
-        let mapping = state.key_mappings.iter().find(|m| m.virtual_key == virtual_key).unwrap();
-        let request_path = req.uri().path();
-        if let Err(reason) = check_credential_access(mapping, cred_state, request_path) {
-            let _ = state.alert_tx.send(Alert::new(
-                Severity::Warning,
-                "proxy",
-                &format!("Credential access denied for {}: {}", virtual_key, reason),
-            )).await;
-            return Ok(Response::builder()
-                .status(StatusCode::FORBIDDEN)
-                .header("Content-Type", "application/json")
-                .body(Body::from(format!(r#"{{"error":"credential denied: {}"}}"#, reason)))
-                .unwrap());
+    {
+        let cred_states = state.credential_states.read().await;
+        let key_mappings = state.key_mappings.read().await;
+        if let Some(cred_state) = cred_states.get(&virtual_key) {
+            let mapping = key_mappings.iter().find(|m| m.virtual_key == virtual_key).unwrap();
+            let request_path = req.uri().path();
+            if let Err(reason) = check_credential_access(mapping, cred_state, request_path) {
+                drop(cred_states);
+                drop(key_mappings);
+                let _ = state.alert_tx.send(Alert::new(
+                    Severity::Warning,
+                    "proxy",
+                    &format!("Credential access denied for {}: {}", virtual_key, reason),
+                )).await;
+                return Ok(Response::builder()
+                    .status(StatusCode::FORBIDDEN)
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(format!(r#"{{"error":"credential denied: {}"}}"#, reason)))
+                    .unwrap());
+            }
         }
     }
 
