@@ -43,8 +43,19 @@ fn check_log_file(
 ) -> Option<Alert> {
     use std::os::unix::fs::MetadataExt;
 
-    let metadata = match std::fs::metadata(path) {
-        Ok(m) => m,
+    // Use symlink_metadata (lstat) to avoid following symlinks.
+    // An attacker replacing the audit log with a symlink would fool stat().
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(m) => {
+            if m.file_type().is_symlink() {
+                return Some(Alert::new(
+                    Severity::Critical,
+                    "logtamper",
+                    &format!("Audit log {} is a SYMLINK — possible evidence redirection attack", path.display()),
+                ));
+            }
+            m
+        }
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
             return Some(Alert::new(
                 Severity::Warning,

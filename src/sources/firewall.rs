@@ -127,6 +127,7 @@ fn is_firewall_active(status: &str, backend: FirewallBackend) -> bool {
 
 /// Generate a simple diff between two status strings
 fn diff_status(baseline: &str, current: &str) -> String {
+    const MAX_DIFF_LEN: usize = 2000;
     let old_lines: Vec<&str> = baseline.lines().collect();
     let new_lines: Vec<&str> = current.lines().collect();
 
@@ -135,12 +136,20 @@ fn diff_status(baseline: &str, current: &str) -> String {
     for line in &old_lines {
         if !new_lines.contains(line) {
             diff.push_str(&format!("- {}\n", line));
+            if diff.len() > MAX_DIFF_LEN {
+                diff.push_str(&format!("... [truncated, {} total changes]", old_lines.len() + new_lines.len()));
+                return diff;
+            }
         }
     }
     // Show added lines
     for line in &new_lines {
         if !old_lines.contains(line) {
             diff.push_str(&format!("+ {}\n", line));
+            if diff.len() > MAX_DIFF_LEN {
+                diff.push_str(&format!("... [truncated, {} total changes]", old_lines.len() + new_lines.len()));
+                return diff;
+            }
         }
     }
     if diff.is_empty() {

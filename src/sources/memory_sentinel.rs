@@ -412,10 +412,10 @@ impl MemoryIntegrity {
 
         // Hash all text regions
         for region in map.text_regions() {
-            let len = (region.end - region.start) as usize;
-            if len == 0 || len > 64 * 1024 * 1024 {
-                continue; // skip empty or absurdly large
-            }
+            let len = match region.end.checked_sub(region.start) {
+                Some(l) if l > 0 && l <= 64 * 1024 * 1024 => l as usize,
+                _ => continue, // skip empty, underflow, or absurdly large
+            };
             match read_process_memory(pid, region.start, len, caps) {
                 Ok(data) => {
                     let hash: [u8; 32] = blake3::hash(&data).into();

@@ -139,6 +139,11 @@ mod syscall_numbers {
 
     pub const MEMFD_CREATE: u32 = 319;
     pub const PROCESS_VM_WRITEV: u32 = 311;
+    pub const UNSHARE: u32 = 272;
+    pub const SETNS: u32 = 308;
+    pub const IO_URING_SETUP: u32 = 425;
+    pub const IO_URING_ENTER: u32 = 426;
+    pub const IO_URING_REGISTER: u32 = 427;
 
     pub static KILL_LIST: &[u32] = &[
         PTRACE, INIT_MODULE, FINIT_MODULE, DELETE_MODULE,
@@ -146,6 +151,7 @@ mod syscall_numbers {
         MOUNT, UMOUNT2, SWAPON, SWAPOFF,
         REBOOT, SETTIMEOFDAY, CLOCK_SETTIME, ACCT, QUOTACTL,
         MEMFD_CREATE, PROCESS_VM_WRITEV,
+        UNSHARE, SETNS, IO_URING_SETUP, IO_URING_ENTER, IO_URING_REGISTER,
     ];
 
     // TRACE list
@@ -187,6 +193,11 @@ mod syscall_numbers {
     pub const QUOTACTL: u32 = 60;
     pub const MEMFD_CREATE: u32 = 279;
     pub const PROCESS_VM_WRITEV: u32 = 271;
+    pub const UNSHARE: u32 = 97;
+    pub const SETNS: u32 = 268;
+    pub const IO_URING_SETUP: u32 = 425;
+    pub const IO_URING_ENTER: u32 = 426;
+    pub const IO_URING_REGISTER: u32 = 427;
 
     pub static KILL_LIST: &[u32] = &[
         PTRACE, INIT_MODULE, FINIT_MODULE, DELETE_MODULE,
@@ -194,6 +205,7 @@ mod syscall_numbers {
         MOUNT, UMOUNT2, SWAPON, SWAPOFF,
         REBOOT, SETTIMEOFDAY, CLOCK_SETTIME, ACCT, QUOTACTL,
         MEMFD_CREATE, PROCESS_VM_WRITEV,
+        UNSHARE, SETNS, IO_URING_SETUP, IO_URING_ENTER, IO_URING_REGISTER,
     ];
 
     // TRACE list
@@ -244,6 +256,7 @@ pub fn build_filter() -> Vec<BpfInsn> {
     // trace_count (jeq to trace_ret) +
     // 1 (allow ret) + 1 (trace ret) + 1 (kill ret)
     let total = 3 + kill_count + trace_count + 3;
+    assert!(total <= 255, "BPF filter too large for u8 jump offsets ({} instructions)", total);
     let mut prog = Vec::with_capacity(total);
 
     // [0] Load architecture
@@ -434,7 +447,7 @@ mod tests {
     #[test]
     fn test_syscall_tables_populated() {
         let table = syscall_table();
-        assert_eq!(table.kill_list.len(), 18);
+        assert_eq!(table.kill_list.len(), 23);
         assert_eq!(table.trace_list.len(), 10);
 
         // All entries should be unique

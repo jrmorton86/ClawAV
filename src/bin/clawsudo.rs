@@ -110,7 +110,9 @@ fn load_policies(dirs: &[&Path]) -> Vec<PolicyRule> {
             Ok(e) => e,
             Err(_) => continue,
         };
-        for entry in entries.flatten() {
+        let mut sorted_entries: Vec<_> = entries.flatten().collect();
+        sorted_entries.sort_by_key(|e| e.file_name());
+        for entry in sorted_entries {
             let path = entry.path();
             match path.extension().and_then(|e| e.to_str()) {
                 Some("yaml") | Some("yml") => {
@@ -182,7 +184,9 @@ fn log_line(status: &str, full_cmd: &str) {
     let line = format!("[{}] [{}] user=openclaw cmd=\"{}\"\n", ts, status, full_cmd);
 
     // Try production path, fall back to local
-    let log_paths: &[&str] = &["/var/log/clawtower/clawsudo.log", "./clawsudo.log"];
+    // Only use the production log path — never fall back to CWD which is
+    // attacker-controlled (symlink to arbitrary file, corrupt audit chain).
+    let log_paths: &[&str] = &["/var/log/clawtower/clawsudo.log"];
     for path in log_paths {
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
@@ -575,7 +579,7 @@ fn main() -> ExitCode {
             eprintln!("✅ Allowed by policy: {}", rule_name);
             log_line("ALLOWED", &full_cmd);
             // Execute via sudo
-            let status = std::process::Command::new("sudo")
+            let status = std::process::Command::new("/usr/bin/sudo")
                 .args(&args)
                 .env_clear()
                 .env("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
@@ -622,7 +626,7 @@ fn main() -> ExitCode {
                 Some(true) => {
                     eprintln!("✅ Approved via ClawTower API");
                     log_line("ALLOWED", &full_cmd);
-                    let status = std::process::Command::new("sudo")
+                    let status = std::process::Command::new("/usr/bin/sudo")
                         .args(&args)
                         .status();
                     return match status {
@@ -701,7 +705,7 @@ fn main() -> ExitCode {
                 Some(true) => {
                     eprintln!("✅ Approved via ClawTower API");
                     log_line("ALLOWED", &full_cmd);
-                    let status = std::process::Command::new("sudo")
+                    let status = std::process::Command::new("/usr/bin/sudo")
                         .args(&args)
                         .status();
                     return match status {

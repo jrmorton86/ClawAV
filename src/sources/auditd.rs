@@ -372,7 +372,10 @@ pub fn parse_to_event(line: &str, watched_users: Option<&[String]>) -> Option<Pa
     // var prefixes like LD_PRELOAD= that don't appear in EXECVE records.
     if line.contains("type=PROCTITLE") {
         if let Some(hex_start) = line.find("proctitle=") {
-            let hex = &line[hex_start + 10..];
+            let hex_raw = &line[hex_start + 10..];
+            // Cap hex field to 4096 chars (2048 decoded bytes) to prevent
+            // excessive allocation from adversarial audit log lines.
+            let hex = &hex_raw[..hex_raw.len().min(4096)];
             // Decode hex to bytes, replace NUL with space
             if let Ok(bytes) = (0..hex.len())
                 .step_by(2)
