@@ -22,6 +22,7 @@
 //! - OpenClaw-specific checks (gateway exposure, auth, filesystem scope)
 
 pub mod helpers;
+pub mod enforcement;
 pub mod filesystem;
 pub mod hardening;
 pub mod network;
@@ -49,7 +50,7 @@ use filesystem::{
 use hardening::{
     scan_password_policy, scan_systemd_hardening, scan_apparmor_protection,
     scan_firewall, scan_auditd, scan_core_dump_settings, scan_ssh,
-    scan_docker_security, scan_sudoers_risk,
+    scan_docker_security, scan_sudoers_risk, scan_nodejs_version,
 };
 use network::{
     scan_network_interfaces, scan_listening_services, scan_dns_resolver,
@@ -188,6 +189,12 @@ impl SecurityScanner {
             scan_systemd_hardening(),
             scan_user_account_audit(),
         ];
+        // Node.js version check
+        results.push(scan_nodejs_version());
+
+        // Enforcement verification (AppArmor, seccomp, capabilities)
+        results.extend(enforcement::scan_enforcement_verification());
+
         // Shadow/quarantine directory permission verification
         results.push(scan_shadow_quarantine_permissions());
 
@@ -235,8 +242,15 @@ impl SecurityScanner {
 
             // Phase 3: Extensions
             if openclaw_config.plugin_watch {
-                results.extend(scan_extensions_dir(
-                    &format!("{}/extensions", openclaw_config.state_dir)));
+                let ext_dir = format!("{}/extensions", openclaw_config.state_dir);
+                results.extend(scan_extensions_dir(&ext_dir));
+                results.extend(filesystem::scan_plugin_integrity(
+                    &ext_dir,
+                    "/etc/clawtower/plugin-baselines.sha256",
+                ));
+                results.extend(
+                    crate::detect::barnacle::BarnacleEngine::scan_npm_lockfile_integrity(&ext_dir),
+                );
             }
 
             // Phase 3: Control UI

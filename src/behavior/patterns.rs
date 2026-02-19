@@ -7,7 +7,72 @@
 //! These include command lists, file paths, and substring patterns organized
 //! by threat category.
 
+use std::collections::VecDeque;
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
+
 use crate::core::alerts::Severity;
+
+// ─── Credential read rate tracking ──────────────────────────────────────────
+
+/// Filename that triggers rate-based severity (downgraded from unconditional CRIT).
+pub(crate) const AUTH_PROFILES_FILENAME: &str = "auth-profiles.json";
+
+/// Sliding-window tracker for auth-profiles.json reads.
+/// Tracks timestamps of recent reads within a 60s window.
+/// < 3 reads → Warning; >= 3 reads → Critical (rapid access escalation).
+struct CredReadTracker {
+    timestamps: VecDeque<Instant>,
+}
+
+impl CredReadTracker {
+    const WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+    const ESCALATION_THRESHOLD: usize = 3;
+
+    fn new() -> Self {
+        Self { timestamps: VecDeque::new() }
+    }
+}
+
+static CRED_READ_TRACKER: OnceLock<Mutex<CredReadTracker>> = OnceLock::new();
+
+fn cred_read_tracker() -> &'static Mutex<CredReadTracker> {
+    CRED_READ_TRACKER.get_or_init(|| Mutex::new(CredReadTracker::new()))
+}
+
+/// Record an auth-profiles.json read and return the appropriate severity.
+/// Uses a 60s sliding window: < 3 reads → Warning, >= 3 reads → Critical.
+pub(crate) fn record_cred_read() -> Severity {
+    let mut tracker = cred_read_tracker()
+        .lock()
+        .expect("cred_read_tracker mutex poisoned");
+    let now = Instant::now();
+
+    // Prune entries older than the window
+    while let Some(&front) = tracker.timestamps.front() {
+        if now.duration_since(front) > CredReadTracker::WINDOW {
+            tracker.timestamps.pop_front();
+        } else {
+            break;
+        }
+    }
+
+    tracker.timestamps.push_back(now);
+
+    if tracker.timestamps.len() >= CredReadTracker::ESCALATION_THRESHOLD {
+        Severity::Critical
+    } else {
+        Severity::Warning
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn reset_cred_read_tracker() {
+    let mut tracker = cred_read_tracker()
+        .lock()
+        .expect("cred_read_tracker mutex poisoned");
+    tracker.timestamps.clear();
+}
 
 // ─── Sensitive file paths ───────────────────────────────────────────────────
 
@@ -542,6 +607,34 @@ pub(crate) const SOCIAL_ENGINEERING_PATTERNS: &[(&str, &str, Severity)] = &[
     ("pip install --index-url", "pip install from non-default index", Severity::Warning),
     ("pip install --extra-index-url", "pip install from extra index URL", Severity::Warning),
     ("npm install --registry", "npm install from non-default registry", Severity::Warning),
+];
+
+// ─── Plugin abuse patterns ───────────────────────────────────────────────
+
+/// Binaries indicating plugin misbehavior when spawned from a Node.js context.
+pub(crate) const PLUGIN_ABUSE_BINARIES: &[&str] = &[
+    "nc", "ncat", "netcat", "socat",   // raw network listeners/proxies
+    "nmap", "masscan",                  // network scanning
+    "tcpdump", "tshark",               // packet capture
+    "strace", "ltrace",                // process tracing
+];
+
+/// OpenClaw config files that plugins should never modify.
+pub(crate) const PLUGIN_CONFIG_PATHS: &[&str] = &[
+    "openclaw.json",
+    "auth-profiles.json",
+    "gateway.yaml",
+    "device.json",
+    "settings.json",
+];
+
+/// Plugin-specific persistence locations — writes here are suspicious.
+pub(crate) const PLUGIN_PERSISTENCE_PATHS: &[&str] = &[
+    "node_modules/.bin/",
+    ".npmrc",
+    "node_modules/.cache/",
+    "node_modules/.hooks/",
+    ".node_modules/.package-lock.json",
 ];
 
 /// Document-specific social engineering patterns -- deceptive content in files

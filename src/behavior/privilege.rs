@@ -16,6 +16,7 @@ use super::patterns::{
     CRITICAL_READ_PATHS, CRITICAL_WRITE_PATHS,
     AGENT_SENSITIVE_PATHS, RECON_PATHS,
     NETWORK_CAPABLE_RUNTIMES,
+    AUTH_PROFILES_FILENAME, record_cred_read,
 };
 
 /// Check for container escape binaries and patterns (EXECVE events).
@@ -169,6 +170,11 @@ pub(crate) fn check_sensitive_file_reads(binary: &str, args: &[String]) -> Optio
                 if arg.contains(path) {
                     return Some((BehaviorCategory::PrivilegeEscalation, Severity::Critical));
                 }
+            }
+            // auth-profiles.json: rate-based severity (Warning unless rapid access)
+            if arg.contains(AUTH_PROFILES_FILENAME) {
+                let severity = record_cred_read();
+                return Some((BehaviorCategory::DataExfiltration, severity));
             }
             for path in AGENT_SENSITIVE_PATHS {
                 if arg.contains(path) {

@@ -317,14 +317,68 @@ pub fn check_mdns_openclaw_leak(avahi_output: &str) -> ScanResult {
     }
 }
 
-/// Scan for mDNS info leaks by checking avahi-browse.
-pub fn scan_mdns_leaks() -> Vec<ScanResult> {
-    match Command::new("avahi-browse").args(["-apt", "--no-db-lookup"]).output() {
-        Ok(output) => vec![check_mdns_openclaw_leak(
-            &String::from_utf8_lossy(&output.stdout))],
-        Err(_) => vec![ScanResult::new("openclaw:mdns", ScanStatus::Pass,
-            "avahi-browse not available — mDNS check skipped")],
+/// Check avahi service files for OpenClaw/ClawTower service registrations.
+pub fn check_avahi_service_files(service_dir_content: &[String]) -> ScanResult {
+    let suspicious: Vec<&String> = service_dir_content.iter()
+        .filter(|content| {
+            let lower = content.to_lowercase();
+            lower.contains("openclaw") || lower.contains("clawtower")
+        })
+        .collect();
+
+    if suspicious.is_empty() {
+        ScanResult::new("openclaw:mdns:services", ScanStatus::Pass,
+            "No OpenClaw/ClawTower avahi service files found")
+    } else {
+        ScanResult::new("openclaw:mdns:services", ScanStatus::Warn,
+            &format!("{} avahi service file(s) advertise OpenClaw/ClawTower — remove to prevent info leak",
+                suspicious.len()))
     }
+}
+
+/// Parse avahi-daemon active status output.
+pub fn check_avahi_daemon_status(status: &str) -> ScanResult {
+    let trimmed = status.trim();
+    if trimmed == "active" {
+        ScanResult::new("openclaw:mdns:daemon", ScanStatus::Warn,
+            "avahi-daemon is active — mDNS service advertisements are possible")
+    } else {
+        ScanResult::new("openclaw:mdns:daemon", ScanStatus::Pass,
+            &format!("avahi-daemon is {} — mDNS not actively broadcasting", trimmed))
+    }
+}
+
+/// Scan for mDNS info leaks by checking avahi-browse, service files, and daemon status.
+pub fn scan_mdns_leaks() -> Vec<ScanResult> {
+    let mut results = Vec::new();
+
+    // Check avahi-browse output for live broadcasts
+    match Command::new("avahi-browse").args(["-apt", "--no-db-lookup"]).output() {
+        Ok(output) => results.push(check_mdns_openclaw_leak(
+            &String::from_utf8_lossy(&output.stdout))),
+        Err(_) => results.push(ScanResult::new("openclaw:mdns", ScanStatus::Pass,
+            "avahi-browse not available — mDNS check skipped")),
+    }
+
+    // Check avahi service config files
+    let service_dir = "/etc/avahi/services";
+    if let Ok(entries) = std::fs::read_dir(service_dir) {
+        let service_contents: Vec<String> = entries
+            .flatten()
+            .filter(|e| e.path().extension().map(|ext| ext == "service").unwrap_or(false))
+            .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+            .collect();
+        if !service_contents.is_empty() {
+            results.push(check_avahi_service_files(&service_contents));
+        }
+    }
+
+    // Check avahi-daemon status
+    if let Ok(status) = run_cmd("systemctl", &["is-active", "avahi-daemon"]) {
+        results.push(check_avahi_daemon_status(&status));
+    }
+
+    results
 }
 
 /// Scan OpenClaw extensions directory for installed plugins.
@@ -1139,5 +1193,59 @@ mod tests {
     fn test_openclaw_version_freshness_no_binary() {
         let result = scan_openclaw_version_freshness();
         assert!(result.category == "openclaw:version");
+    }
+
+    // ── Avahi service file tests ───────────────────────────────────────
+
+    #[test]
+    fn test_avahi_service_files_clean() {
+        let files = vec![
+            "<service-group><name>Printer</name></service-group>".to_string(),
+        ];
+        let result = check_avahi_service_files(&files);
+        assert_eq!(result.status, ScanStatus::Pass);
+    }
+
+    #[test]
+    fn test_avahi_service_files_openclaw_leak() {
+        let files = vec![
+            "<service-group><name>OpenClaw Gateway</name></service-group>".to_string(),
+        ];
+        let result = check_avahi_service_files(&files);
+        assert_eq!(result.status, ScanStatus::Warn);
+    }
+
+    #[test]
+    fn test_avahi_service_files_clawtower_leak() {
+        let files = vec![
+            "<service-group><name>ClawTower API</name></service-group>".to_string(),
+        ];
+        let result = check_avahi_service_files(&files);
+        assert_eq!(result.status, ScanStatus::Warn);
+    }
+
+    #[test]
+    fn test_avahi_service_files_empty() {
+        let files: Vec<String> = vec![];
+        let result = check_avahi_service_files(&files);
+        assert_eq!(result.status, ScanStatus::Pass);
+    }
+
+    #[test]
+    fn test_avahi_daemon_active() {
+        let result = check_avahi_daemon_status("active");
+        assert_eq!(result.status, ScanStatus::Warn);
+    }
+
+    #[test]
+    fn test_avahi_daemon_inactive() {
+        let result = check_avahi_daemon_status("inactive");
+        assert_eq!(result.status, ScanStatus::Pass);
+    }
+
+    #[test]
+    fn test_avahi_daemon_not_found() {
+        let result = check_avahi_daemon_status("inactive\n");
+        assert_eq!(result.status, ScanStatus::Pass);
     }
 }

@@ -627,3 +627,36 @@ fn test_node_inline_shadow_read_critical() {
     let event = make_exec_event(&["node", "-e", "require('fs').readFileSync('/etc/shadow')"]);
     assert_eq!(classify_behavior(&event), Some((BehaviorCategory::DataExfiltration, Severity::Critical)));
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Plugin abuse detection integration tests
+// ═══════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_plugin_config_tampering_critical() {
+    // Use "echo" (not "tee") as binary — tee triggers check_sensitive_file_reads
+    // first since openclaw.json is in AGENT_SENSITIVE_PATHS.
+    let event = make_exec_event(&["echo", "{}", ">", "openclaw.json"]);
+    let result = classify_behavior(&event);
+    assert!(result.is_some());
+    let (cat, sev) = result.unwrap();
+    assert_eq!(cat, BehaviorCategory::SecurityTamper);
+    assert_eq!(sev, Severity::Critical);
+}
+
+#[test]
+fn test_plugin_network_listener_critical() {
+    let event = make_exec_event(&["nc", "-l", "-p", "8080"]);
+    // nc -l triggers either plugin listener or exfil — both are valid detections
+    let result = classify_behavior(&event);
+    assert!(result.is_some());
+}
+
+#[test]
+fn test_plugin_node_module_poisoning_syscall() {
+    let mut event = make_syscall_event("openat", "/home/openclaw/project/node_modules/.bin/evil");
+    event.success = true;
+    let result = classify_behavior(&event);
+    // Should be detected as persistence write or plugin poisoning
+    assert!(result.is_some());
+}

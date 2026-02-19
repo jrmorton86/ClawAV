@@ -12,3 +12,4 @@ pub mod network;
 pub mod firewall;
 pub mod logtamper;
 pub mod memory_sentinel;
+pub mod session_log;

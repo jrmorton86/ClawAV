@@ -592,6 +592,103 @@ pub fn scan_swap_tmpfs_security() -> ScanResult {
     }
 }
 
+/// Compare plugin baseline hashes against current file hashes.
+///
+/// Returns results for: added files, removed files, modified files, and no-change.
+pub fn compare_plugin_baselines(
+    baseline: &std::collections::HashMap<String, String>,
+    current: &std::collections::HashMap<String, String>,
+) -> Vec<ScanResult> {
+    let mut results = Vec::new();
+
+    // Modified files
+    for (path, cur_hash) in current {
+        if let Some(base_hash) = baseline.get(path) {
+            if base_hash != cur_hash {
+                results.push(ScanResult::new("plugin_integrity", ScanStatus::Fail,
+                    &format!("Plugin file modified: {}", path)));
+            }
+        } else {
+            results.push(ScanResult::new("plugin_integrity", ScanStatus::Warn,
+                &format!("New plugin file: {}", path)));
+        }
+    }
+
+    // Removed files
+    for path in baseline.keys() {
+        if !current.contains_key(path) {
+            results.push(ScanResult::new("plugin_integrity", ScanStatus::Warn,
+                &format!("Plugin file removed: {}", path)));
+        }
+    }
+
+    if results.is_empty() {
+        results.push(ScanResult::new("plugin_integrity", ScanStatus::Pass,
+            "All plugin files match baseline"));
+    }
+
+    results
+}
+
+/// Scan plugin extensions directory for integrity against a stored SHA-256 baseline.
+pub fn scan_plugin_integrity(extensions_path: &str, baseline_path: &str) -> Vec<ScanResult> {
+    let ext_path = std::path::Path::new(extensions_path);
+    if !ext_path.exists() {
+        return vec![ScanResult::new("plugin_integrity", ScanStatus::Pass,
+            "No extensions directory — nothing to verify")];
+    }
+
+    // Compute current hashes
+    let mut current: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    if let Ok(entries) = walkdir(ext_path) {
+        for entry_path in entries {
+            let ext = entry_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if matches!(ext, "js" | "json") {
+                if let Ok(hash) = compute_file_sha256(entry_path.to_str().unwrap_or("")) {
+                    current.insert(entry_path.display().to_string(), hash);
+                }
+            }
+        }
+    }
+
+    // Load baseline
+    let baseline: std::collections::HashMap<String, String> = std::fs::read_to_string(baseline_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+
+    if baseline.is_empty() {
+        // First run: save baseline
+        if let Ok(json) = serde_json::to_string_pretty(&current) {
+            if let Some(parent) = std::path::Path::new(baseline_path).parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(baseline_path, json);
+        }
+        return vec![ScanResult::new("plugin_integrity", ScanStatus::Pass,
+            &format!("Plugin integrity baseline initialized ({} files)", current.len()))];
+    }
+
+    compare_plugin_baselines(&baseline, &current)
+}
+
+/// Walk a directory recursively and return file paths.
+fn walkdir(dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>, std::io::Error> {
+    let mut files = Vec::new();
+    if dir.is_dir() {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                files.extend(walkdir(&path)?);
+            } else {
+                files.push(path);
+            }
+        }
+    }
+    Ok(files)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -681,5 +778,71 @@ mod tests {
         std::fs::write(&path, "modified").unwrap();
         let hash2 = compute_file_sha256(path.to_str().unwrap()).unwrap();
         assert_ne!(hash1, hash2);
+    }
+
+    // ── Plugin integrity baseline tests ────────────────────────────────
+
+    #[test]
+    fn test_plugin_baselines_no_change() {
+        let mut baseline = std::collections::HashMap::new();
+        baseline.insert("/ext/plugin/index.js".to_string(), "abc123".to_string());
+        let current = baseline.clone();
+        let results = compare_plugin_baselines(&baseline, &current);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, ScanStatus::Pass);
+    }
+
+    #[test]
+    fn test_plugin_baselines_modified_file() {
+        let mut baseline = std::collections::HashMap::new();
+        baseline.insert("/ext/plugin/index.js".to_string(), "abc123".to_string());
+        let mut current = std::collections::HashMap::new();
+        current.insert("/ext/plugin/index.js".to_string(), "def456".to_string());
+        let results = compare_plugin_baselines(&baseline, &current);
+        assert!(results.iter().any(|r| r.status == ScanStatus::Fail && r.details.contains("modified")));
+    }
+
+    #[test]
+    fn test_plugin_baselines_new_file() {
+        let baseline = std::collections::HashMap::new();
+        let mut current = std::collections::HashMap::new();
+        current.insert("/ext/plugin/new.js".to_string(), "abc123".to_string());
+        let results = compare_plugin_baselines(&baseline, &current);
+        assert!(results.iter().any(|r| r.details.contains("New plugin file")));
+    }
+
+    #[test]
+    fn test_plugin_baselines_removed_file() {
+        let mut baseline = std::collections::HashMap::new();
+        baseline.insert("/ext/plugin/old.js".to_string(), "abc123".to_string());
+        let current = std::collections::HashMap::new();
+        let results = compare_plugin_baselines(&baseline, &current);
+        assert!(results.iter().any(|r| r.details.contains("removed")));
+    }
+
+    #[test]
+    fn test_plugin_integrity_no_extensions() {
+        let results = scan_plugin_integrity("/nonexistent/extensions/12345", "/tmp/baseline.json");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, ScanStatus::Pass);
+    }
+
+    #[test]
+    fn test_plugin_integrity_first_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let ext_dir = dir.path().join("extensions");
+        std::fs::create_dir_all(ext_dir.join("my-plugin")).unwrap();
+        std::fs::write(ext_dir.join("my-plugin/index.js"), "console.log('hi')").unwrap();
+        std::fs::write(ext_dir.join("my-plugin/package.json"), "{}").unwrap();
+
+        let baseline_path = dir.path().join("baseline.json");
+        let results = scan_plugin_integrity(
+            ext_dir.to_str().unwrap(),
+            baseline_path.to_str().unwrap(),
+        );
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, ScanStatus::Pass);
+        assert!(results[0].details.contains("baseline initialized"));
+        assert!(baseline_path.exists());
     }
 }

