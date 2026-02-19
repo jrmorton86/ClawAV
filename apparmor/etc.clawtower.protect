@@ -11,7 +11,7 @@
 abi <abi/3.0>,
 
 # Deny /usr/bin/rm from touching ClawTower paths
-profile clawtower.protect.rm /usr/bin/rm flags=(attach_disconnected, complain) {
+profile clawtower.protect.rm /usr/bin/rm flags=(attach_disconnected) {
   #include <abstractions/base>
   deny /etc/clawtower/** wdl,
   deny /etc/clawtower/ wdl,
@@ -22,7 +22,7 @@ profile clawtower.protect.rm /usr/bin/rm flags=(attach_disconnected, complain) {
 }
 
 # Deny /usr/bin/mv from touching ClawTower paths
-profile clawtower.protect.mv /usr/bin/mv flags=(attach_disconnected, complain) {
+profile clawtower.protect.mv /usr/bin/mv flags=(attach_disconnected) {
   #include <abstractions/base>
   deny /etc/clawtower/** wdl,
   deny /etc/clawtower/ wdl,
@@ -33,7 +33,7 @@ profile clawtower.protect.mv /usr/bin/mv flags=(attach_disconnected, complain) {
 }
 
 # Deny /usr/bin/chattr from removing immutable flags on ClawTower paths
-profile clawtower.protect.chattr /usr/bin/chattr flags=(attach_disconnected, complain) {
+profile clawtower.protect.chattr /usr/bin/chattr flags=(attach_disconnected) {
   #include <abstractions/base>
   deny /etc/clawtower/** w,
   deny /etc/clawtower/ w,
@@ -44,7 +44,7 @@ profile clawtower.protect.chattr /usr/bin/chattr flags=(attach_disconnected, com
 }
 
 # Deny /usr/bin/cp from overwriting ClawTower paths
-profile clawtower.protect.cp /usr/bin/cp flags=(attach_disconnected, complain) {
+profile clawtower.protect.cp /usr/bin/cp flags=(attach_disconnected) {
   #include <abstractions/base>
   deny /etc/clawtower/** wdl,
   deny /etc/clawtower/ wdl,
@@ -55,7 +55,7 @@ profile clawtower.protect.cp /usr/bin/cp flags=(attach_disconnected, complain) {
 }
 
 # Deny /usr/bin/chmod from changing perms on ClawTower paths
-profile clawtower.protect.chmod /usr/bin/chmod flags=(attach_disconnected, complain) {
+profile clawtower.protect.chmod /usr/bin/chmod flags=(attach_disconnected) {
   #include <abstractions/base>
   deny /etc/clawtower/** w,
   deny /etc/clawtower/ w,

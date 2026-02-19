@@ -237,6 +237,15 @@ pub async fn run_watchdog(state: AppState, receivers: AlertReceivers) -> Result<
         });
     }
 
+    // Session log audit
+    if state.config.openclaw.session_log_audit {
+        let tx = state.raw_tx.clone();
+        let state_dir = state.config.openclaw.state_dir.clone();
+        tokio::spawn(async move {
+            crate::sources::session_log::tail_session_logs(state_dir, tx).await;
+        });
+    }
+
     // ── Admin socket ────────────────────────────────────────────────────────
 
     let admin_key_hash_path = PathBuf::from("/etc/clawtower/admin.key.hash");
@@ -326,8 +335,12 @@ pub async fn run_watchdog(state: AppState, receivers: AlertReceivers) -> Result<
     let agg_store = state.alert_store.clone();
     let agg_alert_tx = state.alert_tx.clone();
     let agg_slack_tx = state.slack_tx.clone();
+    let chain_hmac_secret = std::fs::read_to_string("/etc/machine-id")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     tokio::spawn(async move {
-        aggregator::run_aggregator(raw_rx, agg_alert_tx, agg_slack_tx, agg_config, min_slack, agg_store).await;
+        aggregator::run_aggregator(raw_rx, agg_alert_tx, agg_slack_tx, agg_config, min_slack, agg_store, chain_hmac_secret).await;
     });
 
     // ── Response engine ─────────────────────────────────────────────────────

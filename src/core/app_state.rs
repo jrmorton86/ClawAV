@@ -90,7 +90,10 @@ impl AppState {
 
         // Load Barnacle engine
         let barnacle_engine = if config.barnacle.enabled {
-            match barnacle::BarnacleEngine::load(&config.barnacle.vendor_dir) {
+            match barnacle::BarnacleEngine::load_verified(
+                &config.barnacle.vendor_dir,
+                Some(std::path::Path::new(&config.barnacle.ioc_pubkey_path)),
+            ) {
                 Ok(engine) => {
                     eprintln!("Barnacle loaded: {} injection, {} command, {} privacy, {} supply-chain patterns",
                         engine.injection_patterns.len(),

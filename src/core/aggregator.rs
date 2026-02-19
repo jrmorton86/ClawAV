@@ -25,6 +25,10 @@ pub struct AggregatorConfig {
     pub rate_limit_per_source: u32,
     /// Rate limit window
     pub rate_limit_window: Duration,
+    /// Dedup window for Critical alerts (same-source only).
+    /// Cross-source Criticals always pass through (H9 defense preserved).
+    /// Set to zero to disable (old behavior: no Critical dedup at all).
+    pub critical_dedup_window: Duration,
 }
 
 impl Default for AggregatorConfig {
@@ -34,6 +38,7 @@ impl Default for AggregatorConfig {
             scan_dedup_window: Duration::from_secs(3600),
             rate_limit_per_source: 20,
             rate_limit_window: Duration::from_secs(60),
+            critical_dedup_window: Duration::from_secs(5),
         }
     }
 }
@@ -78,6 +83,34 @@ impl Aggregator {
             if c.is_ascii_digit() { '#' } else { c }
         }).collect();
         format!("{}:{}", alert.source, shape)
+    }
+
+    /// Check if a Critical alert is a same-source duplicate within the
+    /// critical dedup window. Cross-source Criticals always pass through
+    /// to preserve H9 defense (attacker can't suppress cross-engine detections).
+    fn dedup_critical(&mut self, alert: &Alert) -> bool {
+        if self.config.critical_dedup_window.is_zero() {
+            return false; // disabled — old behavior
+        }
+        let key = Self::dedup_key(alert);
+        let now = Instant::now();
+
+        if let Some(entry) = self.dedup_map.get_mut(&key) {
+            if now.duration_since(entry.last_seen) < self.config.critical_dedup_window {
+                entry.suppressed_count += 1;
+                entry.last_seen = now;
+                return true; // same source + same shape within window → suppress
+            }
+            entry.last_seen = now;
+            entry.suppressed_count = 0;
+            false
+        } else {
+            self.dedup_map.insert(key, DeduplicationEntry {
+                last_seen: now,
+                suppressed_count: 0,
+            });
+            false
+        }
     }
 
     /// Check if an alert is a duplicate within the dedup window
@@ -131,7 +164,9 @@ impl Aggregator {
     /// Periodically clean up old entries to prevent unbounded memory growth
     fn cleanup(&mut self) {
         let now = Instant::now();
-        let dedup_window = self.config.dedup_window.max(self.config.scan_dedup_window);
+        let dedup_window = self.config.dedup_window
+            .max(self.config.scan_dedup_window)
+            .max(self.config.critical_dedup_window);
         let rate_window = self.config.rate_limit_window;
 
         self.dedup_map.retain(|_, entry| {
@@ -147,10 +182,13 @@ impl Aggregator {
     /// Process an alert through dedup and rate limiting.
     /// Returns Some(alert) if it should be forwarded, None if suppressed.
     pub fn process(&mut self, alert: Alert) -> Option<Alert> {
-        // Critical alerts are NEVER deduplicated — they always pass through.
-        // This prevents an attacker from poisoning the dedup cache with
-        // similar-shaped benign alerts to suppress real critical detections (H9).
+        // Critical alerts use a short same-source dedup window instead of
+        // full bypass. Cross-source Criticals always pass through, preserving
+        // H9 defense (attacker can't suppress cross-engine detections).
         if alert.severity == super::alerts::Severity::Critical {
+            if self.dedup_critical(&alert) {
+                return None;
+            }
             return Some(alert);
         }
 
@@ -176,6 +214,7 @@ pub async fn run_aggregator(
     config: AggregatorConfig,
     min_slack_severity: super::alerts::Severity,
     api_store: crate::interface::api::SharedAlertStore,
+    hmac_secret: Option<String>,
 ) {
     let mut aggregator = Aggregator::new(config);
     let mut cleanup_counter: u32 = 0;
@@ -194,7 +233,7 @@ pub async fn run_aggregator(
     } else {
         format!("/tmp/clawtower-{}/audit.chain", unsafe { libc::getuid() })
     };
-    let mut audit_chain = match super::audit_chain::AuditChain::new(&chain_path) {
+    let mut audit_chain = match super::audit_chain::AuditChain::new_with_hmac(&chain_path, hmac_secret) {
         Ok(chain) => Some(chain),
         Err(e) => {
             eprintln!("Warning: Failed to initialize audit chain: {}. Continuing without it.", e);
@@ -354,23 +393,61 @@ mod tests {
     }
 
     #[test]
-    fn test_critical_never_deduped() {
+    fn test_critical_same_source_deduped_within_window() {
         let mut agg = Aggregator::new(AggregatorConfig::default());
         let a1 = make_alert("falco", "privilege escalation!", Severity::Critical);
         let a2 = make_alert("falco", "privilege escalation!", Severity::Critical);
         assert!(agg.process(a1).is_some());
-        // Critical alerts are NEVER deduped — prevents suppression attacks (H9)
-        assert!(agg.process(a2).is_some(), "Critical alerts must never be deduplicated");
+        // Same source + same shape within 5s window → suppressed
+        assert!(agg.process(a2).is_none(), "Same-source Critical should be deduped within window");
     }
 
     #[test]
-    fn test_critical_alerts_different_pids_never_deduped() {
+    fn test_critical_cross_source_never_deduped() {
+        // H9 defense: Criticals from different sources always pass through
+        let mut agg = Aggregator::new(AggregatorConfig::default());
+        let a1 = make_alert("behavior", "CREDENTIAL READ: /etc/shadow", Severity::Critical);
+        let a2 = make_alert("policy", "CREDENTIAL READ: /etc/shadow", Severity::Critical);
+        assert!(agg.process(a1).is_some());
+        assert!(agg.process(a2).is_some(), "Cross-source Critical must never be deduped (H9)");
+    }
+
+    #[test]
+    fn test_critical_dedup_after_window_expires() {
+        let mut agg = Aggregator::new(AggregatorConfig {
+            critical_dedup_window: Duration::from_millis(10),
+            ..Default::default()
+        });
+        let a1 = make_alert("falco", "privilege escalation!", Severity::Critical);
+        assert!(agg.process(a1).is_some());
+
+        std::thread::sleep(Duration::from_millis(20));
+
+        let a2 = make_alert("falco", "privilege escalation!", Severity::Critical);
+        assert!(agg.process(a2).is_some(), "Critical after window expires should pass");
+    }
+
+    #[test]
+    fn test_critical_dedup_zero_window_disables() {
+        let mut agg = Aggregator::new(AggregatorConfig {
+            critical_dedup_window: Duration::ZERO,
+            ..Default::default()
+        });
+        let a1 = make_alert("falco", "privilege escalation!", Severity::Critical);
+        let a2 = make_alert("falco", "privilege escalation!", Severity::Critical);
+        assert!(agg.process(a1).is_some());
+        // Zero window = disabled = old behavior (no dedup)
+        assert!(agg.process(a2).is_some(), "Zero critical_dedup_window should disable dedup");
+    }
+
+    #[test]
+    fn test_critical_alerts_different_pids_deduped_same_source() {
         let mut agg = Aggregator::new(AggregatorConfig::default());
         let a1 = make_alert("behavior", "CREDENTIAL READ: /etc/shadow accessed by /usr/bin/python3 pid=1234", Severity::Critical);
         let a2 = make_alert("behavior", "CREDENTIAL READ: /etc/shadow accessed by /usr/bin/python3 pid=5678", Severity::Critical);
-        // Both should pass through — Critical alerts must never be suppressed by shape dedup
         assert!(agg.process(a1).is_some());
-        assert!(agg.process(a2).is_some(), "Critical alerts with different PIDs must not be deduped");
+        // Same source, same shape (PIDs fuzzy-matched) → suppressed within window
+        assert!(agg.process(a2).is_none(), "Same-source Critical with fuzzy-matching PIDs should be deduped");
     }
 
     #[test]

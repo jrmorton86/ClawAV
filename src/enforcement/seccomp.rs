@@ -137,11 +137,15 @@ mod syscall_numbers {
     pub const ACCT: u32 = 163;
     pub const QUOTACTL: u32 = 179;
 
+    pub const MEMFD_CREATE: u32 = 319;
+    pub const PROCESS_VM_WRITEV: u32 = 311;
+
     pub static KILL_LIST: &[u32] = &[
         PTRACE, INIT_MODULE, FINIT_MODULE, DELETE_MODULE,
         KEXEC_LOAD, KEXEC_FILE_LOAD, PIVOT_ROOT,
         MOUNT, UMOUNT2, SWAPON, SWAPOFF,
         REBOOT, SETTIMEOFDAY, CLOCK_SETTIME, ACCT, QUOTACTL,
+        MEMFD_CREATE, PROCESS_VM_WRITEV,
     ];
 
     // TRACE list
@@ -155,12 +159,10 @@ mod syscall_numbers {
     pub const CLONE: u32 = 56;
     pub const CLONE3: u32 = 435;
     pub const MPROTECT: u32 = 10;
-    pub const MEMFD_CREATE: u32 = 319;
-    pub const PROCESS_VM_WRITEV: u32 = 311;
 
     pub static TRACE_LIST: &[u32] = &[
         EXECVE, EXECVEAT, CONNECT, BIND, LISTEN, ACCEPT, ACCEPT4,
-        CLONE, CLONE3, MPROTECT, MEMFD_CREATE, PROCESS_VM_WRITEV,
+        CLONE, CLONE3, MPROTECT,
     ];
 }
 
@@ -183,12 +185,15 @@ mod syscall_numbers {
     pub const CLOCK_SETTIME: u32 = 112;
     pub const ACCT: u32 = 89;
     pub const QUOTACTL: u32 = 60;
+    pub const MEMFD_CREATE: u32 = 279;
+    pub const PROCESS_VM_WRITEV: u32 = 271;
 
     pub static KILL_LIST: &[u32] = &[
         PTRACE, INIT_MODULE, FINIT_MODULE, DELETE_MODULE,
         KEXEC_LOAD, KEXEC_FILE_LOAD, PIVOT_ROOT,
         MOUNT, UMOUNT2, SWAPON, SWAPOFF,
         REBOOT, SETTIMEOFDAY, CLOCK_SETTIME, ACCT, QUOTACTL,
+        MEMFD_CREATE, PROCESS_VM_WRITEV,
     ];
 
     // TRACE list
@@ -202,12 +207,10 @@ mod syscall_numbers {
     pub const CLONE: u32 = 220;
     pub const CLONE3: u32 = 435;
     pub const MPROTECT: u32 = 226;
-    pub const MEMFD_CREATE: u32 = 279;
-    pub const PROCESS_VM_WRITEV: u32 = 271;
 
     pub static TRACE_LIST: &[u32] = &[
         EXECVE, EXECVEAT, CONNECT, BIND, LISTEN, ACCEPT, ACCEPT4,
-        CLONE, CLONE3, MPROTECT, MEMFD_CREATE, PROCESS_VM_WRITEV,
+        CLONE, CLONE3, MPROTECT,
     ];
 }
 
@@ -431,8 +434,8 @@ mod tests {
     #[test]
     fn test_syscall_tables_populated() {
         let table = syscall_table();
-        assert_eq!(table.kill_list.len(), 16);
-        assert_eq!(table.trace_list.len(), 12);
+        assert_eq!(table.kill_list.len(), 18);
+        assert_eq!(table.trace_list.len(), 10);
 
         // All entries should be unique
         let mut kill_set: Vec<u32> = table.kill_list.to_vec();
