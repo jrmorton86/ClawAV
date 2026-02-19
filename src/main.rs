@@ -19,6 +19,7 @@ mod core;
 mod detect;
 mod enforcement;
 mod interface;
+mod notify;
 mod proxy;
 mod safe;
 mod scanner;
